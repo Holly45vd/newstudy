@@ -1,7 +1,6 @@
 // src/App.js
 import React from "react";
-import { Routes, Route } from "react-router-dom";
-
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 // === MUI & 스타일 ===
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
@@ -68,6 +67,8 @@ const theme = createTheme({
 
 export default function App() {
   return (
+    <BrowserRouter basename="/studynote">
+
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <div className="min-h-screen">
@@ -101,5 +102,7 @@ export default function App() {
         </main>
       </div>
     </ThemeProvider>
+    </BrowserRouter>
+
   );
 }
