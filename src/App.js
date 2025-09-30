@@ -64,21 +64,14 @@ const theme = createTheme({
 });
 
 
-
 export default function App() {
   return (
-    <BrowserRouter basename="/studynote">
-
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <div className="min-h-screen">
-        {/* 모든 페이지에서 항상 보이는 Navbar */}
         <Navbar />
-
-        {/* Navbar 높이만큼 위쪽 여백 추가 */}
         <main style={{ paddingTop: "64px" }}>
           <Routes>
-            {/* === 일반 사용자 페이지 === */}
             <Route path="/" element={<HomePage />} />
             <Route path="/units" element={<UnitListPage />} />
             <Route path="/units/:id" element={<UnitDetailPage />} />
@@ -89,7 +82,7 @@ export default function App() {
             <Route path="/units/:id/practice" element={<PracticePage />} />
             <Route path="/units/:id/summary" element={<SummaryPage />} />
 
-            {/* === 관리자 페이지 === */}
+            {/* 관리자 페이지 */}
             <Route path="/admin" element={<AdminHome />} />
             <Route path="/admin/unit-edit" element={<UnitEditPage />} />
             <Route path="/admin/vocabulary-edit/:id" element={<VocabularyEdit />} />
@@ -102,7 +95,5 @@ export default function App() {
         </main>
       </div>
     </ThemeProvider>
-    </BrowserRouter>
-
   );
 }
