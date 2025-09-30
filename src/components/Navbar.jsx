@@ -23,8 +23,8 @@ export default function Navbar() {
           <Button color="inherit" onClick={() => navigate("/")}>
             홈
           </Button>
-          <Button color="inherit" onClick={() => navigate("/units")}>
-            유닛
+          <Button color="inherit" onClick={() => navigate("/pronunciation")}>
+            발음
           </Button>
         </Box>
 

@@ -19,7 +19,7 @@ import SentencePage from "./pages/SentencePage";
 import ConversationPage from "./pages/ConversationPage";
 import PracticePage from "./pages/PracticePage";
 import SummaryPage from "./pages/SummaryPage";
-
+import PronunciationPage from "./pages/PronunciationPage";
 // === 관리자 페이지 ===
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
@@ -73,6 +73,7 @@ export default function App() {
         <main style={{ paddingTop: "64px" }}>
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="pronunciation" element={<PronunciationPage />} />
             <Route path="/units" element={<UnitListPage />} />
             <Route path="/units/:id" element={<UnitDetailPage />} />
             <Route path="/units/:id/vocabulary" element={<VocabularyPage />} />
