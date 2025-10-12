@@ -1,6 +1,7 @@
 // src/App.js
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route } from "react-router-dom";
+
 // === MUI & 스타일 ===
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
@@ -20,10 +21,10 @@ import ConversationPage from "./pages/ConversationPage";
 import PracticePage from "./pages/PracticePage";
 import SummaryPage from "./pages/SummaryPage";
 import PronunciationPage from "./pages/PronunciationPage";
+
 // === 관리자 페이지 ===
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
-
 
 // === MUI 폰트 테마 설정 ===
 const theme = createTheme({
@@ -43,21 +44,19 @@ const theme = createTheme({
         .chinese-text {
           font-family: 'ZCOOL KuaiLe', sans-serif !important;
           font-size: 4rem !important;
-        },
-                      .chinese-text2 {
+        }
+        .chinese-text2 {
           font-family: 'ZCOOL KuaiLe', sans-serif !important;
           font-size: 3rem !important;
         }
-                        .chinese-text3 {
+        .chinese-text3 {
           font-family: 'ZCOOL KuaiLe', sans-serif !important;
           font-size: 2rem !important;
         }
       `,
-
     },
   },
 });
-
 
 export default function App() {
   return (
@@ -66,22 +65,25 @@ export default function App() {
       <div className="min-h-screen">
         <Navbar />
         <main style={{ paddingTop: "64px" }}>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="pronunciation" element={<PronunciationPage />} />
-            <Route path="/units" element={<UnitListPage />} />
-            <Route path="/units/:id" element={<UnitDetailPage />} />
-            <Route path="/units/:id/vocabulary" element={<VocabularyPage />} />
-            <Route path="/units/:id/grammar" element={<GrammarPage />} />
-            <Route path="/units/:id/sentence" element={<SentencePage />} />
-            <Route path="/units/:id/conversation" element={<ConversationPage />} />
-            <Route path="/units/:id/practice" element={<PracticePage />} />
-            <Route path="/units/:id/summary" element={<SummaryPage />} />
+          <HashRouter>
+            <Routes>
+              {/* 사용자 페이지 */}
+              <Route path="/" element={<HomePage />} />
+              <Route path="/pronunciation" element={<PronunciationPage />} />
+              <Route path="/units" element={<UnitListPage />} />
+              <Route path="/units/:id" element={<UnitDetailPage />} />
+              <Route path="/units/:id/vocabulary" element={<VocabularyPage />} />
+              <Route path="/units/:id/grammar" element={<GrammarPage />} />
+              <Route path="/units/:id/sentence" element={<SentencePage />} />
+              <Route path="/units/:id/conversation" element={<ConversationPage />} />
+              <Route path="/units/:id/practice" element={<PracticePage />} />
+              <Route path="/units/:id/summary" element={<SummaryPage />} />
 
-            {/* 관리자 페이지 */}
-            <Route path="/admin" element={<AdminHome />} />
-            <Route path="/admin/unit-edit" element={<UnitEditPage />} />
-          </Routes>
+              {/* 관리자 페이지 */}
+              <Route path="/admin" element={<AdminHome />} />
+              <Route path="/admin/unit-edit" element={<UnitEditPage />} />
+            </Routes>
+          </HashRouter>
         </main>
       </div>
     </ThemeProvider>
