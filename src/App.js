@@ -23,12 +23,7 @@ import PronunciationPage from "./pages/PronunciationPage";
 // === 관리자 페이지 ===
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
-import VocabularyEdit from "./pages/admin/VocabularyEdit";
-import GrammarEdit from "./pages/admin/GrammarEdit";
-import SentenceEdit from "./pages/admin/SentenceEdit";
-import ConversationEdit from "./pages/admin/ConversationEdit";
-import PracticeEdit from "./pages/admin/PracticeEdit";
-import SummaryEdit from "./pages/admin/SummaryEdit";
+
 
 // === MUI 폰트 테마 설정 ===
 const theme = createTheme({
@@ -86,12 +81,6 @@ export default function App() {
             {/* 관리자 페이지 */}
             <Route path="/admin" element={<AdminHome />} />
             <Route path="/admin/unit-edit" element={<UnitEditPage />} />
-            <Route path="/admin/vocabulary-edit/:id" element={<VocabularyEdit />} />
-            <Route path="/admin/grammar-edit/:id" element={<GrammarEdit />} />
-            <Route path="/admin/sentence-edit/:id" element={<SentenceEdit />} />
-            <Route path="/admin/conversation-edit/:id" element={<ConversationEdit />} />
-            <Route path="/admin/practice-edit/:id" element={<PracticeEdit />} />
-            <Route path="/admin/summary-edit/:id" element={<SummaryEdit />} />
           </Routes>
         </main>
       </div>

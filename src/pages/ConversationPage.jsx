@@ -19,7 +19,9 @@ import UnitTabs from "../components/tabs/UnitTabs";
 export default function ConversationPage() {
   const { id } = useParams();
   const [unit, setUnit] = useState(null);
-  const { speak } = useSpeechSynthesis();
+  const { speak, voices } = useSpeechSynthesis();
+
+  const chineseVoice = voices.find((v) => v.lang === "zh-CN");
 
   useEffect(() => {
     const loadData = async () => {
@@ -67,7 +69,14 @@ export default function ConversationPage() {
                     </Typography>
                     <IconButton
                       color="primary"
-                      onClick={() => speak({ text: line.chinese, lang: "zh-CN" })}
+                      onClick={() =>
+                        speak({
+                          text: line.chinese,
+                          voice: chineseVoice || null,
+                          lang: "zh-CN",
+                          rate: 0.9,
+                        })
+                      }
                     >
                       <VolumeUpIcon />
                     </IconButton>

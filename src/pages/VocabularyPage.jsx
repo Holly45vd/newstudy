@@ -18,7 +18,9 @@ import UnitTabs from "../components/tabs/UnitTabs";
 export default function VocabularyPage() {
   const { id } = useParams();
   const [unit, setUnit] = useState(null);
-  const { speak } = useSpeechSynthesis();
+
+  // useSpeechSynthesis에서 voices까지 가져오기
+  const { speak, voices } = useSpeechSynthesis();
 
   useEffect(() => {
     const loadData = async () => {
@@ -36,9 +38,18 @@ export default function VocabularyPage() {
     );
   }
 
+  // 중국어 음성으로 읽기
   const handleSpeak = (text) => {
     if (!text) return;
-    speak({ text, lang: "zh-CN" });
+
+    // zh-CN 음성 찾기
+    const zhVoice = voices.find((v) => v.lang === "zh-CN");
+
+    speak({
+      text,
+      voice: zhVoice || null, // zh-CN 있으면 그걸로, 없으면 기본
+      lang: "zh-CN",           // fallback
+    });
   };
 
   return (
@@ -64,7 +75,7 @@ export default function VocabularyPage() {
                 >
                   <CardContent>
                     <Box display="flex" alignItems="center" justifyContent="center" mb={1}>
-                      <Typography variant="h6"  className="chinese-text">
+                      <Typography variant="h6" className="chinese-text">
                         {vocab.hanzi}
                       </Typography>
                       <IconButton color="primary" onClick={() => handleSpeak(vocab.hanzi)}>
