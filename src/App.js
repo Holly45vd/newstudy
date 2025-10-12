@@ -1,6 +1,6 @@
 // src/App.js
 import React from "react";
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 
 // === MUI & 스타일 ===
 import { ThemeProvider, createTheme } from "@mui/material/styles";
@@ -65,25 +65,23 @@ export default function App() {
       <div className="min-h-screen">
         <Navbar />
         <main style={{ paddingTop: "64px" }}>
-          <HashRouter>
-            <Routes>
-              {/* 사용자 페이지 */}
-              <Route path="/" element={<HomePage />} />
-              <Route path="/pronunciation" element={<PronunciationPage />} />
-              <Route path="/units" element={<UnitListPage />} />
-              <Route path="/units/:id" element={<UnitDetailPage />} />
-              <Route path="/units/:id/vocabulary" element={<VocabularyPage />} />
-              <Route path="/units/:id/grammar" element={<GrammarPage />} />
-              <Route path="/units/:id/sentence" element={<SentencePage />} />
-              <Route path="/units/:id/conversation" element={<ConversationPage />} />
-              <Route path="/units/:id/practice" element={<PracticePage />} />
-              <Route path="/units/:id/summary" element={<SummaryPage />} />
+          <Routes>
+            {/* 사용자 페이지 */}
+            <Route path="/" element={<HomePage />} />
+            <Route path="/pronunciation" element={<PronunciationPage />} />
+            <Route path="/units" element={<UnitListPage />} />
+            <Route path="/units/:id" element={<UnitDetailPage />} />
+            <Route path="/units/:id/vocabulary" element={<VocabularyPage />} />
+            <Route path="/units/:id/grammar" element={<GrammarPage />} />
+            <Route path="/units/:id/sentence" element={<SentencePage />} />
+            <Route path="/units/:id/conversation" element={<ConversationPage />} />
+            <Route path="/units/:id/practice" element={<PracticePage />} />
+            <Route path="/units/:id/summary" element={<SummaryPage />} />
 
-              {/* 관리자 페이지 */}
-              <Route path="/admin" element={<AdminHome />} />
-              <Route path="/admin/unit-edit" element={<UnitEditPage />} />
-            </Routes>
-          </HashRouter>
+            {/* 관리자 페이지 */}
+            <Route path="/admin" element={<AdminHome />} />
+            <Route path="/admin/unit-edit" element={<UnitEditPage />} />
+          </Routes>
         </main>
       </div>
     </ThemeProvider>

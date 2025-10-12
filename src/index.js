@@ -1,25 +1,18 @@
-// src/index.js
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import { BrowserRouter } from "react-router-dom";
-import { CssBaseline } from "@mui/material";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
 
-const theme = createTheme({
-  palette: {
-    primary: { main: "#1976d2" },
-    secondary: { main: "#f57c00" },
-  },
-});
+// 개발(dev)에는 베이스네임 사용 X, 빌드(prod)에서만 PUBLIC_URL 적용
+const basename =
+  process.env.NODE_ENV === "production" && process.env.PUBLIC_URL
+    ? process.env.PUBLIC_URL
+    : "/";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
-  <ThemeProvider theme={theme}>
-    <CssBaseline />
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </ThemeProvider>
+  <BrowserRouter basename={basename}>
+    <App />
+  </BrowserRouter>
 );
