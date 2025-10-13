@@ -1,22 +1,10 @@
 // src/pages/PracticePage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { fetchUnitById } from "../firebase/firebaseFirestore";
 import {
-  Typography,
-  Card,
-  CardContent,
-  Button,
-  Box,
-  CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  IconButton,
-  Stack,
-  Chip,
-  Divider,
+  Typography, Card, CardContent, Button, Box, CircularProgress, Dialog,
+  DialogTitle, DialogContent, DialogActions, IconButton, Stack, Chip, Divider,
 } from "@mui/material";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
@@ -57,29 +45,104 @@ export default function PracticePage() {
   // 확장표현 뜻 토글
   const [showMeanings, setShowMeanings] = useState(false);
 
+  // react-speech-kit
   const { speak, voices } = useSpeechSynthesis();
-  const zhVoice = useMemo(
-    () =>
-      voices.find((v) => v.lang === "zh-CN") ||
-      voices.find((v) => (v.lang || "").toLowerCase().startsWith("zh")) ||
-      null,
-    [voices]
-  );
-  const koVoice = useMemo(
-    () =>
-      voices.find((v) => v.lang === "ko-KR") ||
-      voices.find((v) => (v.lang || "").toLowerCase().startsWith("ko")) ||
-      null,
-    [voices]
-  );
-  const speakZh = (text, rate = 0.95) => {
+
+  // (A) 안드로이드 보이스 웜업/재시도
+  useEffect(() => {
+    const synth = window?.speechSynthesis;
+    if (!synth) return;
+    synth.getVoices(); // 1차 호출
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      const v = synth.getVoices();
+      if (v && v.length) clearInterval(t);
+      if (tries >= 5) clearInterval(t); // 총 ~1.5s
+    }, 300);
+    return () => clearInterval(t);
+  }, []);
+
+  // (B) 중국어/한국어 보이스 선택기: zh/ko + 이름 키워드 + 우선순위
+  const pickVoice = useCallback((list, langPrefix) => {
+    const arr = Array.isArray(list) ? list : [];
+    const kwMap = {
+      zh: ["chinese", "中文", "普通话", "國語", "国语", "粤語", "粵語"],
+      ko: ["korean", "한국어", "조선말"],
+    };
+    const kws = kwMap[langPrefix] || [];
+    const cands = arr.filter((v) => {
+      const lang = (v.lang || "").toLowerCase();
+      const name = (v.name || "").toLowerCase();
+      const langMatch =
+        lang.startsWith(langPrefix) ||
+        (langPrefix === "zh" && (lang.includes("cmn") || lang.includes("yue"))); // cmn=Mandarin, yue=Cantonese
+      const nameMatch = kws.some((k) => name.includes(k.toLowerCase()));
+      return langMatch || nameMatch;
+    });
+
+    // 우선순위: 중국 표준 > 대만 표준 > 홍콩/기타
+    const scoreZh = (L) => {
+      if (L.includes("zh-cn") || L.includes("cmn-hans")) return 3;
+      if (L.includes("zh-tw") || L.includes("cmn-hant")) return 2;
+      if (L.includes("zh-hk") || L.includes("yue")) return 1;
+      return 0;
+    };
+
+    return cands
+      .sort((a, b) => {
+        const La = (a.lang || "").toLowerCase();
+        const Lb = (b.lang || "").toLowerCase();
+        if (langPrefix === "zh") return scoreZh(Lb) - scoreZh(La);
+        return 0; // ko는 정렬 불필요
+      })[0] || null;
+  }, []);
+
+  // react-speech-kit 목록이 비면 네이티브로 보강
+  const zhVoice = useMemo(() => {
+    const native = window?.speechSynthesis?.getVoices?.() || [];
+    const list = (native.length ? native : voices) || [];
+    return list.find((v) => v.lang === "zh-CN") || pickVoice(list, "zh") || null;
+  }, [voices, pickVoice]);
+
+  const koVoice = useMemo(() => {
+    const native = window?.speechSynthesis?.getVoices?.() || [];
+    const list = (native.length ? native : voices) || [];
+    return list.find((v) => v.lang === "ko-KR") || pickVoice(list, "ko") || null;
+  }, [voices, pickVoice]);
+
+  // 안전 발화: 큐 정리 → react-speech-kit 우선 → 네이티브 폴백
+  const safeSpeak = useCallback((text, opts) => {
     if (!text) return;
-    speak({ text, voice: zhVoice || null, lang: "zh-CN", rate });
-  };
-  const speakKo = (text, rate = 1) => {
-    if (!text) return;
-    speak({ text, voice: koVoice || null, lang: "ko-KR", rate });
-  };
+    const synth = window?.speechSynthesis;
+    try {
+      if (synth) synth.cancel();
+
+      const { voice, lang, rate = 0.95, pitch = 1.0, volume = 1.0 } = opts || {};
+      if (voice) {
+        // react-speech-kit 경로
+        speak({ text, voice, rate, pitch, volume });
+      } else if (synth && "SpeechSynthesisUtterance" in window) {
+        // 네이티브 폴백
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = lang || "zh-CN";
+        u.rate = rate;
+        u.pitch = pitch;
+        u.volume = volume;
+        synth.speak(u);
+      } else {
+        console.warn("TTS 미지원 또는 보이스 없음");
+      }
+    } catch (e) {
+      console.error("TTS 오류:", e);
+    }
+  }, [speak]);
+
+  const speakZh = (text, rate = 0.95) =>
+    safeSpeak(text, { voice: zhVoice, lang: "zh-CN", rate });
+
+  const speakKo = (text, rate = 1.0) =>
+    safeSpeak(text, { voice: koVoice, lang: "ko-KR", rate });
 
   // writing → reorder 변환
   const convertWritingToReorder = (writing = []) =>
@@ -106,7 +169,6 @@ export default function PracticePage() {
         });
         setReorders(init);
       } else {
-        // 구형 MCQ 배열은 요구사항상 사용 안 함
         setReorders({});
       }
     };
@@ -262,7 +324,7 @@ export default function PracticePage() {
     return (
       <Box sx={{ mt: 3 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-          <Typography variant="h6">확장 표현 (식당)</Typography>
+          <Typography variant="h6">확장 표현</Typography>
           <IconButton onClick={() => setShowMeanings((v) => !v)}>
             {showMeanings ? <VisibilityOffIcon /> : <VisibilityIcon />}
           </IconButton>
@@ -275,7 +337,7 @@ export default function PracticePage() {
                   {/* 한자 + 재생 */}
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <Typography className="chinese-text2" sx={{ fontSize: "1.05rem" }}>
-                      {e.zh}
+                      {e.zh} 
                     </Typography>
                     <IconButton size="small" color="primary" onClick={() => speakZh(e.zh)}>
                       <VolumeUpIcon fontSize="small" />
@@ -331,8 +393,6 @@ export default function PracticePage() {
 
         {/* 3) 확장표현: 병음/한국어 발음 포함 */}
         {!Array.isArray(practice) && renderExtension(practice.extension_phrases || [])}
-
-        {/* 구형(MCQ 배열) 구조는 요구사항상 숨김 */}
 
         {/* 결과 모달 */}
         <Dialog open={open} onClose={handleClose}>

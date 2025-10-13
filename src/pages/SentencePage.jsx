@@ -1,18 +1,10 @@
 // src/pages/SubstitutionPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { fetchUnitById } from "../firebase/firebaseFirestore";
 import {
-  Typography,
-  Card,
-  CardContent,
-  Grid,
-  CircularProgress,
-  Box,
-  IconButton,
-  Button,
-  Divider,
-  Chip,
+  Typography, Card, CardContent, Grid, CircularProgress, Box,
+  IconButton, Button, Divider, Chip,
 } from "@mui/material";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import ReplayIcon from "@mui/icons-material/Replay";
@@ -39,8 +31,6 @@ const normItem = (it = {}) => ({
 /** 패턴 구조 정규화 (신형/구형 지원) */
 const normalizePattern = (raw) => {
   if (!raw) return null;
-
-  // 구형
   if (raw.slot && Array.isArray(raw.items)) {
     return {
       title: raw.title || raw.pattern || "교체연습",
@@ -51,8 +41,6 @@ const normalizePattern = (raw) => {
       tags: raw.tags || [],
     };
   }
-
-  // 신형
   const slots = Array.isArray(raw.slots) ? raw.slots : [];
   const items = {};
   if (raw.items && typeof raw.items === "object") {
@@ -60,7 +48,6 @@ const normalizePattern = (raw) => {
       items[k] = (raw.items[k] || []).map(normItem);
     }
   }
-
   return {
     title: raw.title || raw.pattern || "교체연습",
     pattern: raw.pattern || (slots.length ? slots.map((s) => `{${s}}`).join(" ") : ""),
@@ -88,15 +75,56 @@ export default function SubstitutionPage() {
   const { id } = useParams();
   const [unit, setUnit] = useState(null);
   const [selected, setSelected] = useState({}); // { [patternIndex]: { [slotKey]: item } }
+
+  // react-speech-kit
   const { speak, voices } = useSpeechSynthesis();
 
+  // (A) 안드로이드 보이스 웜업/재시도
+  useEffect(() => {
+    const synth = window?.speechSynthesis;
+    if (!synth) return;
+    synth.getVoices(); // 1차 호출
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      const v = synth.getVoices();
+      if (v && v.length) clearInterval(t);
+      if (tries >= 5) clearInterval(t); // 총 ~1.5s
+    }, 300);
+    return () => clearInterval(t);
+  }, []);
+
+  // (B) 중국어 보이스 선택기: zh/cmn/이름 키워드 + 우선순위(중국 > 대만 > 홍콩/광둥)
+  const pickChineseVoice = useCallback((list) => {
+    const arr = Array.isArray(list) ? list : [];
+    const kw = ["chinese", "中文", "普通话", "國語", "国语", "粤語", "粵語"];
+    const cands = arr.filter((v) => {
+      const lang = (v.lang || "").toLowerCase();
+      const name = (v.name || "").toLowerCase();
+      const langMatch = lang.startsWith("zh") || lang.includes("cmn");
+      const nameMatch = kw.some((k) => name.includes(k.toLowerCase()));
+      return langMatch || nameMatch;
+    });
+    const score = (v) => {
+      const L = (v.lang || "").toLowerCase();
+      if (L.includes("zh-cn") || L.includes("cmn-hans")) return 3;
+      if (L.includes("zh-tw") || L.includes("cmn-hant")) return 2;
+      if (L.includes("zh-hk") || L.includes("yue")) return 1; // 광둥어는 최하
+      return 0;
+    };
+    return cands.sort((a, b) => score(b) - score(a))[0] || null;
+  }, []);
+
+  // react-speech-kit 목록이 비어있으면 네이티브로 보강하여 선택
   const chineseVoice = useMemo(() => {
+    const native = window?.speechSynthesis?.getVoices?.() || [];
+    const list = (native.length ? native : voices) || [];
     return (
-      voices.find((v) => v.lang === "zh-CN") ||
-      voices.find((v) => (v.lang || "").toLowerCase().startsWith("zh")) ||
+      list.find((v) => v.lang === "zh-CN") ||
+      pickChineseVoice(list) ||
       null
     );
-  }, [voices]);
+  }, [voices, pickChineseVoice]);
 
   useEffect(() => {
     (async () => {
@@ -110,14 +138,34 @@ export default function SubstitutionPage() {
     return raw.map(normalizePattern).filter(Boolean);
   }, [unit]);
 
+  // (C) 안전 발화: 큐 정리 → 보이스 있으면 speak(), 없으면 네이티브 폴백
   const handleSpeak = (text) => {
     if (!text) return;
-    speak({
-      text,
-      voice: chineseVoice || null,
-      lang: "zh-CN",
-      rate: 0.9,
-    });
+    const synth = window?.speechSynthesis;
+    try {
+      if (synth) synth.cancel(); // 이전 큐 정리
+
+      if (chineseVoice) {
+        speak({
+          text,
+          voice: chineseVoice,
+          rate: 0.95,
+          pitch: 1.0,
+          volume: 1.0,
+        });
+      } else if (synth && "SpeechSynthesisUtterance" in window) {
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = "zh-CN"; // 폴백 강제
+        u.rate = 0.95;
+        u.pitch = 1.0;
+        u.volume = 1.0;
+        synth.speak(u);
+      } else {
+        console.warn("TTS 미지원 또는 보이스 없음");
+      }
+    } catch (e) {
+      console.error("TTS 오류:", e);
+    }
   };
 
   const handleSelect = (pi, slotKey, item) => {
@@ -168,10 +216,9 @@ export default function SubstitutionPage() {
           subs.map((pattern, pi) => {
             const sel = selected[pi] || {};
 
-            // 완성 문장(중문/병음/한글 발음/의미)
             const zh = buildWithField(pattern.pattern, pattern.slots, sel, "hanzi");
             const py = buildWithField(pattern.pattern, pattern.slots, sel, "pinyin");
-            const pron = buildWithField(pattern.pattern, pattern.slots, sel, "pronunciation"); // ★ 한글 발음
+            const pron = buildWithField(pattern.pattern, pattern.slots, sel, "pronunciation");
             const koJoined = pattern.slots
               .map((slot) => sel?.[slot]?.meaning)
               .filter(Boolean)
@@ -263,7 +310,6 @@ export default function SubstitutionPage() {
                         })}
                       </Grid>
 
-                      {/* 슬롯 내 선택 항목 미리보기: 병음 + 한글 발음 + 뜻 */}
                       {sel?.[slotKey] && (
                         <Typography
                           variant="caption"
