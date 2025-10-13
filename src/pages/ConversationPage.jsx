@@ -1,96 +1,31 @@
 // src/pages/ConversationPage.jsx
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { fetchUnitById } from "../firebase/firebaseFirestore";
 import {
-  Typography, Card, CardContent, CircularProgress, Box, Stack, Avatar, IconButton,
+  Typography,
+  Card,
+  CardContent,
+  CircularProgress,
+  Box,
+  Stack,
+  Avatar,
+  IconButton,
 } from "@mui/material";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
-import { useSpeechSynthesis } from "react-speech-kit";
 import UnitTabs from "../components/tabs/UnitTabs";
+import { speakSafe, warmUpVoices } from "../lib/ttsHelper";
 
 export default function ConversationPage() {
   const { id } = useParams();
   const [unit, setUnit] = useState(null);
-  const { speak, voices } = useSpeechSynthesis();
 
-  // (A) 안드로이드 보이스 웜업/재시도
+  // 보이스 웜업 (마운트 시 1회)
   useEffect(() => {
-    const synth = window?.speechSynthesis;
-    if (!synth) return;
-    synth.getVoices();
-    let tries = 0;
-    const t = setInterval(() => {
-      tries += 1;
-      const v = synth.getVoices();
-      if (v && v.length) clearInterval(t);
-      if (tries >= 5) clearInterval(t);
-    }, 300);
-    return () => clearInterval(t);
+    warmUpVoices();
   }, []);
 
-  // (B) 중국어 보이스 선택기: zh/cmn/이름 키워드 + 우선순위(중국 > 대만 > 홍콩/광둥)
-  const pickChineseVoice = useCallback((list) => {
-    const arr = Array.isArray(list) ? list : [];
-    const kw = ["chinese", "中文", "普通话", "國語", "国语", "粤語", "粵語"];
-    const cands = arr.filter((v) => {
-      const lang = (v.lang || "").toLowerCase();
-      const name = (v.name || "").toLowerCase();
-      const langMatch = lang.startsWith("zh") || lang.includes("cmn");
-      const nameMatch = kw.some((k) => name.includes(k.toLowerCase()));
-      return langMatch || nameMatch;
-    });
-    const score = (v) => {
-      const L = (v.lang || "").toLowerCase();
-      if (L.includes("zh-cn") || L.includes("cmn-hans")) return 3;
-      if (L.includes("zh-tw") || L.includes("cmn-hant")) return 2;
-      if (L.includes("zh-hk") || L.includes("yue")) return 1; // 광둥어는 최하
-      return 0;
-    };
-    return cands.sort((a, b) => score(b) - score(a))[0] || null;
-  }, []);
-
-  // react-speech-kit 목록이 비어있으면 네이티브로 보강하여 선택
-  const chineseVoice = useMemo(() => {
-    const native = window?.speechSynthesis?.getVoices?.() || [];
-    const list = (native.length ? native : voices) || [];
-    return (
-      list.find((v) => v.lang === "zh-CN") ||
-      pickChineseVoice(list) ||
-      null
-    );
-  }, [voices, pickChineseVoice]);
-
-  // 안전 발화: 큐 정리 → 보이스 있으면 speak(), 없으면 네이티브 폴백
-  const handleSpeak = useCallback((text, rate = 0.95) => {
-    if (!text) return;
-    const synth = window?.speechSynthesis;
-    try {
-      if (synth) synth.cancel();
-
-      if (chineseVoice) {
-        speak({
-          text,
-          voice: chineseVoice,
-          rate,
-          pitch: 1.0,
-          volume: 1.0,
-        });
-      } else if (synth && "SpeechSynthesisUtterance" in window) {
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = "zh-CN";
-        u.rate = rate;
-        u.pitch = 1.0;
-        u.volume = 1.0;
-        synth.speak(u);
-      } else {
-        console.warn("TTS 미지원 또는 보이스 없음");
-      }
-    } catch (e) {
-      console.error("TTS 오류:", e);
-    }
-  }, [chineseVoice, speak]);
-
+  // 데이터 로드
   useEffect(() => {
     const loadData = async () => {
       const data = await fetchUnitById(id);
@@ -98,6 +33,11 @@ export default function ConversationPage() {
     };
     loadData();
   }, [id]);
+
+  // 안전 발화 (중국어)
+  const handleSpeak = useCallback((text) => {
+    speakSafe(text, { lang: "zh", rate: 0.95 });
+  }, []);
 
   if (!unit) {
     return (
@@ -148,6 +88,7 @@ export default function ConversationPage() {
                         <VolumeUpIcon />
                       </IconButton>
                     </Box>
+
                     {!!line.pinyin && (
                       <Typography variant="body2" color="text.secondary">
                         {line.pinyin}
