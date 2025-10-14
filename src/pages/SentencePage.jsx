@@ -1,5 +1,5 @@
 // src/pages/SubstitutionPage.jsx — 리스트 전용, 단순 UI (검색/카드/밀도/TTS슬롯축소 제거)
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { fetchUnitById } from "../firebase/firebaseFirestore";
 import {
@@ -21,13 +21,13 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import TuneIcon from "@mui/icons-material/Tune";
 import { useSpeechSynthesis } from "react-speech-kit";
 import UnitTabs from "../components/tabs/UnitTabs";
-import { pinyin } from "pinyin-pro"; // 전체 문장 병음 생성용
+import { pinyin as pinyinPro } from "pinyin-pro"; // 전체 문장 병음 생성용
+import { pinyinArrayToKorean } from "../lib/pinyinKorean"; // 병음배열 → 한국어 발음
 
 /** 안전한 replaceAll (폴백) */
 const replaceAll = (text, search, replacement) => {
   if (typeof text !== "string") return "";
   if (typeof text.replaceAll === "function") return text.replaceAll(search, replacement);
-  // 정규식 특수문자 이스케이프 (정확한 문자셋)
   const escapeForRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(escapeForRegex(search), "g");
   return text.replace(re, replacement);
@@ -52,7 +52,10 @@ const normalizePattern = (raw) => {
       items: { [raw.slot]: raw.items.map(normItem) },
       hint_ko: raw.hint_ko || "",
       pron_pattern: raw.pron_pattern || "",
-      pron_dict: raw.pron_dict || [], // 고정 한자 → 한글 발음 매핑
+      pron_dict: raw.pron_dict || [],
+      // ★ 추가: 한국어 문장 템플릿/사전
+      meaning_pattern: raw.meaning_pattern || "",
+      meaning_dict: raw.meaning_dict || [],
       tags: raw.tags || [],
     };
   }
@@ -68,7 +71,10 @@ const normalizePattern = (raw) => {
     items,
     hint_ko: raw.hint_ko || "",
     pron_pattern: raw.pron_pattern || "",
-    pron_dict: raw.pron_dict || [], // 누락 주의
+    pron_dict: raw.pron_dict || [],
+    // ★ 추가
+    meaning_pattern: raw.meaning_pattern || "",
+    meaning_dict: raw.meaning_dict || [],
     tags: raw.tags || [],
   };
 };
@@ -83,6 +89,30 @@ const buildWithField = (patternStr, slots, selected, field, placeholder = "____"
   return out;
 };
 
+/** pron_dict 기반 한자→발음 라인 구성(패턴 없을 때 폴백) */
+const buildPronByDict = (zh, pronDict = []) => {
+  if (!zh || !Array.isArray(pronDict) || pronDict.length === 0) return "";
+  let out = zh;
+  const dictSorted = [...pronDict].sort((a, b) => (b?.hanzi?.length || 0) - (a?.hanzi?.length || 0));
+  dictSorted.forEach((m) => {
+    if (!m?.hanzi || !m?.pron) return;
+    out = replaceAll(out, m.hanzi, m.pron);
+  });
+  return out.replace(/\s+/g, " ").trim();
+};
+
+/** ★ meaning_dict 기반 한자→한국어 치환(고정 구간 번역) */
+const buildMeaningByDict = (zh, meaningDict = []) => {
+  if (!zh || !Array.isArray(meaningDict) || meaningDict.length === 0) return "";
+  let out = zh;
+  const dictSorted = [...meaningDict].sort((a, b) => (b?.hanzi?.length || 0) - (a?.hanzi?.length || 0));
+  dictSorted.forEach((m) => {
+    if (!m?.hanzi || !m?.ko) return;
+    out = replaceAll(out, m.hanzi, m.ko);
+  });
+  return out.replace(/\s+/g, " ").trim();
+};
+
 const PREF_KEY = "subs_page_prefs_min"; // 표시 토글만 저장
 
 export default function SubstitutionPage() {
@@ -91,14 +121,16 @@ export default function SubstitutionPage() {
   const [selected, setSelected] = useState({}); // { [patternIndex]: { [slotKey]: item } }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(null); // 복사 피드백용
 
   // react-speech-kit
   const { speak, voices } = useSpeechSynthesis();
+  const speakingRef = useRef(false);
 
-  // UI 상태: 간소화 — 표시 토글만 유지
+  // UI 상태
   const [show, setShow] = useState({ pinyin: true, pron: false, meaning: true });
 
-  // 보이스 로딩(안드로이드 대응)
+  // 보이스 로딩(안드/사파리 대응)
   useEffect(() => {
     const synth = window?.speechSynthesis;
     if (!synth) return;
@@ -108,30 +140,26 @@ export default function SubstitutionPage() {
       tries += 1;
       const v = synth.getVoices();
       if (v && v.length) clearInterval(t);
-      if (tries >= 5) clearInterval(t);
-    }, 300);
+      if (tries >= 8) clearInterval(t);
+    }, 250);
     return () => clearInterval(t);
   }, []);
 
-  // 중국어 보이스 선택기
+  // 중국어 보이스 선택
   const pickChineseVoice = useCallback((list) => {
     const arr = Array.isArray(list) ? list : [];
-    const kw = ["chinese", "中文", "普通话", "國語", "国语", "粤語", "粵語", "國語(臺灣)"];
-    const cands = arr.filter((v) => {
-      const lang = (v.lang || "").toLowerCase();
-      const name = (v.name || "").toLowerCase();
-      const langMatch = lang.startsWith("zh") || lang.includes("cmn");
-      const nameMatch = kw.some((k) => name.includes(k.toLowerCase()));
-      return langMatch || nameMatch;
-    });
     const score = (v) => {
-      const L = (v.lang || "").toLowerCase();
-      if (L.includes("zh-cn") || L.includes("cmn-hans")) return 3;
-      if (L.includes("zh-tw") || L.includes("cmn-hant")) return 2;
-      if (L.includes("zh-hk") || L.includes("yue")) return 1;
-      return 0;
+      const name = (v.name || "").toLowerCase();
+      const lang = (v.lang || "").toLowerCase();
+      let s = 0;
+      if (lang.startsWith("zh")) s += 5;
+      if (lang.includes("cmn")) s += 3;
+      if (lang.includes("zh-cn") || lang.includes("cmn-hans")) s += 2;
+      if (name.includes("chinese") || name.includes("中文") || name.includes("普通话") || name.includes("國語") || name.includes("国语")) s += 2;
+      if (lang.includes("zh-tw") || lang.includes("cmn-hant")) s += 1;
+      return s;
     };
-    return cands.sort((a, b) => score(b) - score(a))[0] || null;
+    return arr.sort((a, b) => score(b) - score(a))[0] || null;
   }, []);
 
   const chineseVoice = useMemo(() => {
@@ -144,12 +172,15 @@ export default function SubstitutionPage() {
   useEffect(() => {
     const run = async () => {
       try {
-        setLoading(true); setError(null);
+        setLoading(true);
+        setError(null);
         const data = await fetchUnitById(id);
         setUnit(data || {});
       } catch (e) {
         setError(e?.message || "데이터 로드 실패");
-      } finally { setLoading(false); }
+      } finally {
+        setLoading(false);
+      }
     };
     try {
       const raw = localStorage.getItem(PREF_KEY);
@@ -172,45 +203,109 @@ export default function SubstitutionPage() {
   }, [unit]);
 
   // 발화
-  const handleSpeak = (text) => {
-    if (!text) return;
-    const synth = window?.speechSynthesis;
-    try {
-      if (synth) synth.cancel();
-      if (chineseVoice) {
-        speak({ text, voice: chineseVoice, rate: 0.95, pitch: 1.0, volume: 1.0 });
-      } else if (synth && "SpeechSynthesisUtterance" in window) {
-        const u = new SpeechSynthesisUtterance(text);
-        u.lang = "zh-CN"; u.rate = 0.95; u.pitch = 1.0; u.volume = 1.0;
-        synth.speak(u);
+  const handleSpeak = useCallback(
+    (text) => {
+      if (!text) return;
+      const synth = window?.speechSynthesis;
+      try {
+        if (synth) synth.cancel();
+        speakingRef.current = true;
+        if (chineseVoice) {
+          speak({ text, voice: chineseVoice, rate: 0.95, pitch: 1.0, volume: 1.0, onend: () => (speakingRef.current = false) });
+        } else if (synth && "SpeechSynthesisUtterance" in window) {
+          const u = new SpeechSynthesisUtterance(text);
+          u.lang = "zh-CN";
+          u.rate = 0.95;
+          u.pitch = 1.0;
+          u.volume = 1.0;
+          u.onend = () => (speakingRef.current = false);
+          synth.speak(u);
+        }
+      } catch (e) {
+        console.error("TTS 오류:", e);
+        speakingRef.current = false;
       }
-    } catch (e) { console.error("TTS 오류:", e); }
-  };
+    },
+    [chineseVoice, speak]
+  );
 
-  const handleCopy = async (text) => { try { await navigator.clipboard.writeText(text); } catch {} };
+  const handleCopy = useCallback(async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(text);
+      setTimeout(() => setCopied(null), 1200);
+    } catch {}
+  }, []);
 
-  const handleSelect = (pi, slotKey, item) => {
+  const handleSelect = useCallback((pi, slotKey, item) => {
     setSelected((prev) => ({ ...prev, [pi]: { ...(prev[pi] || {}), [slotKey]: item } }));
+  }, []);
+
+  const handleReset = useCallback((pi) => {
+    setSelected((prev) => {
+      const next = { ...prev };
+      delete next[pi];
+      return next;
+    });
+  }, []);
+
+  const randPick = (arr) => {
+    if (!Array.isArray(arr) || arr.length === 0) return undefined;
+    if (window?.crypto?.getRandomValues) {
+      const buf = new Uint32Array(1);
+      window.crypto.getRandomValues(buf);
+      return arr[buf[0] % arr.length];
+    }
+    return arr[Math.floor(Math.random() * arr.length)];
   };
-  const handleReset = (pi) => {
-    setSelected((prev) => { const next = { ...prev }; delete next[pi]; return next; });
-  };
-  const handleRandom = (pi, pattern) => {
-    const next = {}; pattern.slots.forEach((slotKey) => {
+
+  const handleRandom = useCallback((pi, pattern) => {
+    const next = {};
+    pattern.slots.forEach((slotKey) => {
       const arr = pattern.items?.[slotKey] || [];
-      if (arr.length > 0) next[slotKey] = arr[Math.floor(Math.random() * arr.length)];
+      const pick = randPick(arr);
+      if (pick) next[slotKey] = pick;
     });
     setSelected((prev) => ({ ...prev, [pi]: next }));
-  };
-  const handleRandomAll = () => {
-    const next = {}; subs.forEach((p, pi) => {
-      const sel = {}; p.slots.forEach((s) => {
-        const arr = p.items?.[s] || []; if (arr.length) sel[s] = arr[Math.floor(Math.random() * arr.length)];
-      }); next[pi] = sel; });
+  }, []);
+
+  const handleRandomAll = useCallback(() => {
+    const next = {};
+    subs.forEach((p, pi) => {
+      const sel = {};
+      p.slots.forEach((s) => {
+        const arr = p.items?.[s] || [];
+        const pick = randPick(arr);
+        if (pick) sel[s] = pick;
+      });
+      next[pi] = sel;
+    });
     setSelected(next);
+  }, [subs]);
+
+  // 병음 만들기
+  const makePinyin = (zh) => {
+    try {
+      const clean = (zh || "").replace(/_+/g, "").trim();
+      if (!clean) return "";
+      return pinyinPro(clean, { toneType: "mark", type: "array" }).join(" ");
+    } catch {
+      return "";
+    }
   };
 
-  if (!unit || loading) {
+  // 성조 없는 병음 배열
+  const makePinyinArrayNoTone = (zh) => {
+    try {
+      const clean = (zh || "").replace(/_+/g, "").trim();
+      if (!clean) return [];
+      return pinyinPro(clean, { toneType: "none", type: "array" });
+    } catch {
+      return [];
+    }
+  };
+
+  if (loading || !unit) {
     return (
       <Box>
         <UnitTabs />
@@ -235,26 +330,56 @@ export default function SubstitutionPage() {
       <UnitTabs />
 
       {/* 헤더: 단순화 */}
-      <Box p={2} sx={{ position: "sticky", top: 0, zIndex: 2, bgcolor: "background.paper", borderBottom: 1, borderColor: "divider" }}>
+      <Box
+        p={2}
+        sx={{
+          position: "sticky",
+          top: 0,
+          zIndex: 2,
+          bgcolor: "background.paper",
+          borderBottom: 1,
+          borderColor: "divider",
+          backdropFilter: "saturate(180%) blur(4px)",
+        }}
+      >
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }}>
-          <Typography variant="h5" fontWeight="bold">교체연습 (Unit {id})</Typography>
+          <Typography variant="h5" fontWeight="bold">
+            교체연습 (Unit {id})
+          </Typography>
           <Box sx={{ flexGrow: 1 }} />
           <Tooltip title="모든 패턴에 랜덤 적용">
-            <Button startIcon={<ShuffleIcon />} onClick={handleRandomAll} variant="outlined" size="small">랜덤 전체</Button>
+            <Button startIcon={<ShuffleIcon />} onClick={handleRandomAll} variant="outlined" size="small">
+              랜덤 전체
+            </Button>
           </Tooltip>
         </Stack>
         <Stack direction="row" spacing={1} alignItems="center" mt={1.25}>
           <TuneIcon fontSize="small" />
-          <Chip size="small" label={`병음 ${show.pinyin ? "ON" : "OFF"}`} variant={show.pinyin ? "filled" : "outlined"} onClick={() => setShow((s) => ({ ...s, pinyin: !s.pinyin }))} />
-          <Chip size="small" label={`발음 ${show.pron ? "ON" : "OFF"}`} variant={show.pron ? "filled" : "outlined"} onClick={() => setShow((s) => ({ ...s, pron: !s.pron }))} />
-          <Chip size="small" label={`뜻 ${show.meaning ? "ON" : "OFF"}`} variant={show.meaning ? "filled" : "outlined"} onClick={() => setShow((s) => ({ ...s, meaning: !s.meaning }))} />
+          <Chip
+            size="small"
+            label={`병음 ${show.pinyin ? "ON" : "OFF"}`}
+            variant={show.pinyin ? "filled" : "outlined"}
+            onClick={() => setShow((s) => ({ ...s, pinyin: !s.pinyin }))}
+          />
+          <Chip
+            size="small"
+            label={`발음 ${show.pron ? "ON" : "OFF"}`}
+            variant={show.pron ? "filled" : "outlined"}
+            onClick={() => setShow((s) => ({ ...s, pron: !s.pron }))}
+          />
+          <Chip
+            size="small"
+            label={`뜻 ${show.meaning ? "ON" : "OFF"}`}
+            variant={show.meaning ? "filled" : "outlined"}
+            onClick={() => setShow((s) => ({ ...s, meaning: !s.meaning }))}
+          />
         </Stack>
       </Box>
 
       {/* 본문: 리스트 뷰만 */}
       <Box p={2}>
         {!subs.length ? (
-          <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Paper sx={{ p: 4, textAlign: "center" }}>
             <Typography color="text.secondary">등록된 교체연습이 없습니다.</Typography>
           </Paper>
         ) : (
@@ -262,70 +387,144 @@ export default function SubstitutionPage() {
             {subs.map((pattern, pi) => {
               const sel = selected[pi] || {};
               const zh = buildWithField(pattern.pattern, pattern.slots, sel, "hanzi");
-              // 전체 문장 병음 생성(혼용 방지)
-              const py = pinyin(zh, { toneType: 'mark', type: 'array' }).join(' ');
-              const pron = pattern.pron_pattern
-                ? buildWithField(pattern.pron_pattern, pattern.slots, sel, "pronunciation")
-                : null;
-              const koJoined = pattern.slots.map((slot) => sel?.[slot]?.meaning).filter(Boolean).join(" / ");
+
+              // 1) 병음(성조 표시)
+              const py = makePinyin(zh);
+
+              // 2) 발음(우선순위: pron_pattern > pron_dict > 자동변환)
+              const pron =
+                pattern.pron_pattern && pattern.pron_pattern.trim().length > 0
+                  ? buildWithField(pattern.pron_pattern, pattern.slots, sel, "pronunciation")
+                  : (pattern.pron_dict && pattern.pron_dict.length > 0
+                      ? buildPronByDict(zh, pattern.pron_dict)
+                      : pinyinArrayToKorean(makePinyinArrayNoTone(zh)));
+
+              // 3) 한국어 뜻(우선순위: meaning_pattern > meaning_dict > 슬롯 의미 결합)
+              const meaningLine = (() => {
+                // 템플릿이 있으면 슬롯의 meaning으로 채움
+                if (pattern.meaning_pattern && pattern.meaning_pattern.trim()) {
+                  return buildWithField(pattern.meaning_pattern, pattern.slots, sel, "meaning", "____")
+                    .replace(/\s+/g, " ")
+                    .trim();
+                }
+                // 고정 구간 사전이 있으면 한자기반 치환 후 남은 슬롯은 meaning으로 보조
+                if (pattern.meaning_dict && pattern.meaning_dict.length > 0) {
+                  // 1) 한자 문장 기준으로 고정구간을 먼저 한국어로 치환
+                  let baseKo = buildMeaningByDict(zh, pattern.meaning_dict);
+                  // 2) 슬롯 선택이 있으면 괄호로 보조 의미 추가(선택)
+                  pattern.slots.forEach((s) => {
+                    const m = sel?.[s]?.meaning;
+                    if (m) baseKo = baseKo.replace("____", m);
+                  });
+                  return baseKo || "";
+                }
+                // 최후: 선택 슬롯들의 meaning을 단순 결합
+                const joined = pattern.slots.map((s) => sel?.[s]?.meaning).filter(Boolean).join(" / ");
+                return joined;
+              })();
 
               return (
-                <Paper key={pi} sx={{ p: 2, borderRadius: 2 }} variant="outlined">
+                <Paper key={`${pattern.title}-${pi}`} sx={{ p: 2, borderRadius: 2 }} variant="outlined">
                   {/* 헤더 */}
                   <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                     <Stack direction="row" spacing={1} alignItems="center">
-                      <Typography variant="subtitle1" fontWeight={700}>{pattern.title || `패턴 ${pi + 1}`}</Typography>
+                      <Typography variant="subtitle1" fontWeight={700}>
+                        {pattern.title || `패턴 ${pi + 1}`}
+                      </Typography>
                       {(pattern.tags || []).map((t, i) => (
                         <Chip key={i} size="small" label={t} />
                       ))}
                     </Stack>
                     <Stack direction="row" spacing={0.5}>
-                      <Tooltip title="랜덤 선택"><IconButton onClick={() => handleRandom(pi, pattern)} aria-label="랜덤 선택"><ShuffleIcon /></IconButton></Tooltip>
-                      <Tooltip title="초기화"><IconButton onClick={() => handleReset(pi)} aria-label="초기화"><ReplayIcon /></IconButton></Tooltip>
+                      <Tooltip title="랜덤 선택">
+                        <IconButton onClick={() => handleRandom(pi, pattern)} aria-label="랜덤 선택">
+                          <ShuffleIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="초기화">
+                        <IconButton onClick={() => handleReset(pi)} aria-label="초기화">
+                          <ReplayIcon />
+                        </IconButton>
+                      </Tooltip>
                     </Stack>
                   </Stack>
 
                   {pattern.hint_ko && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>힌트: {pattern.hint_ko}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                      힌트: {pattern.hint_ko}
+                    </Typography>
                   )}
 
                   <Divider sx={{ my: 1 }} />
 
                   {/* 완성 문장 */}
-                  <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.25 }}>
-                    <Typography variant="h6" className="chinese-text2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>{zh}</Typography>
-                    <Tooltip title="복사"><IconButton size="small" onClick={() => handleCopy(zh)} aria-label="복사"><ContentCopyIcon fontSize="small" /></IconButton></Tooltip>
-                    <Tooltip title="듣기"><IconButton color="primary" size="small" onClick={() => handleSpeak(zh)} aria-label="중국어 문장 듣기"><VolumeUpIcon fontSize="small" /></IconButton></Tooltip>
+                  <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.25, flexWrap: "wrap" }}>
+                    <Typography variant="h6" className="chinese-text2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                      {zh}
+                    </Typography>
+                    <Tooltip title={copied === zh ? "복사됨" : "복사"}>
+                      <IconButton size="small" onClick={() => handleCopy(zh)} aria-label="복사">
+                        <ContentCopyIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="듣기">
+                      <IconButton color="primary" size="small" onClick={() => handleSpeak(zh)} aria-label="중국어 문장 듣기">
+                        <VolumeUpIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </Stack>
 
                   {/* 보조 줄 */}
-                  {show.pinyin && <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{py}</Typography>}
-                  {show.pron && !!pron && (<Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>{pron}</Typography>)}
-                  {show.meaning && !!koJoined && (<Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>{koJoined}</Typography>)}
+                  {show.pinyin && !!py && (
+                    <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
+                      {py}
+                    </Typography>
+                  )}
+                  {show.pron && !!pron && (
+                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
+                      {pron}
+                    </Typography>
+                  )}
+                  {show.meaning && !!meaningLine && (
+                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
+                      {meaningLine}
+                    </Typography>
+                  )}
 
                   {/* 슬롯 영역 */}
                   <Divider sx={{ my: 1.25 }} />
                   {pattern.slots.map((slotKey) => (
                     <Box key={slotKey} sx={{ mb: 1.0 }}>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>{slotKey} 선택</Typography>
-                      <Stack direction="row" flexWrap="wrap" gap={1}>
+                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                        {slotKey} 선택
+                      </Typography>
+                      <Stack direction="row" flexWrap="wrap" gap={1} role="listbox" aria-label={`${slotKey} 후보`}>
                         {(pattern.items?.[slotKey] || []).map((item, idx) => {
                           const active = sel?.[slotKey]?.hanzi === item.hanzi;
                           return (
                             <Chip
-                              key={idx}
+                              key={`${slotKey}-${idx}-${item.hanzi}`}
                               variant={active ? "filled" : "outlined"}
                               color={active ? "primary" : "default"}
                               label={<span style={{ fontWeight: 600 }}>{item.hanzi}</span>}
                               size="small"
                               onClick={() => handleSelect(pi, slotKey, item)}
                               clickable
+                              tabIndex={0}
+                              role="option"
+                              aria-selected={active}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  handleSelect(pi, slotKey, item);
+                                }
+                              }}
                             />
                           );
                         })}
                       </Stack>
                       {sel?.[slotKey] && (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
                           {sel[slotKey].pinyin}
                           {sel[slotKey].pronunciation ? ` · ${sel[slotKey].pronunciation}` : ""}
                           {sel[slotKey].meaning ? ` · ${sel[slotKey].meaning}` : ""}

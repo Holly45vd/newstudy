@@ -145,6 +145,7 @@ export default function WordDetailModal({ open, onClose, word }) {
                   <Typography sx={{  display: "inline" }}>
                     {g.term}
                   </Typography>
+                  <Typography sx={{  display: "inline" }}> ({g.pinyin}{g.pron})  </Typography>
                   {g.desc && (
                     <Typography sx={{ display: "inline", ml: 1 }}>{g.desc}</Typography>
                   )}

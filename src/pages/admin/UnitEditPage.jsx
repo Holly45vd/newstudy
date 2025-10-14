@@ -326,9 +326,9 @@ export default function UnitEditPage() {
     }));
 
   // ===== 교체연습(다중 슬롯) =====
-  // 내부 표준화: { title, pattern, slots: string[], items: { [slot]: Array<{hanzi,pinyin,pron,meaning}> } }
+  // 내부 표준화: { title, pattern, slots, items, pron_pattern, pron_dict[], meaning_pattern, meaning_dict[] }
   const normalizeSubPattern = (sp) => {
-    if (!sp) return { title: "", pattern: "", slots: [], items: {} };
+    if (!sp) return { title: "", pattern: "", slots: [], items: {}, pron_pattern: "", pron_dict: [], meaning_pattern: "", meaning_dict: [] };
     // 구형(단일 slot) 호환
     if (sp.slot && Array.isArray(sp.items)) {
       return {
@@ -343,6 +343,10 @@ export default function UnitEditPage() {
             meaning: it.meaning ?? it.ko ?? "",
           })),
         },
+        pron_pattern: sp.pron_pattern || "",
+        pron_dict: Array.isArray(sp.pron_dict) ? sp.pron_dict : [],
+        meaning_pattern: sp.meaning_pattern || "",
+        meaning_dict: Array.isArray(sp.meaning_dict) ? sp.meaning_dict : [],
       };
     }
     // 신형
@@ -362,8 +366,11 @@ export default function UnitEditPage() {
       pattern: sp.pattern || "",
       slots: Array.isArray(sp.slots) ? sp.slots : [],
       items,
+      pron_pattern: sp.pron_pattern || "",
+      pron_dict: Array.isArray(sp.pron_dict) ? sp.pron_dict : [],
+      meaning_pattern: sp.meaning_pattern || "",
+      meaning_dict: Array.isArray(sp.meaning_dict) ? sp.meaning_dict : [],
     };
-    // 끝
   };
 
   const addSubPattern = () => {
@@ -372,7 +379,7 @@ export default function UnitEditPage() {
       ...p,
       substitution: [
         ...(p.substitution || []),
-        { title: "", pattern: "", slots: [], items: {} },
+        { title: "", pattern: "", slots: [], items: {}, pron_pattern: "", pron_dict: [], meaning_pattern: "", meaning_dict: [] },
       ],
     }));
   };
@@ -440,20 +447,80 @@ export default function UnitEditPage() {
       return { ...p, substitution: arr };
     });
 
-const deleteSubItem = (si, slotKey, ii) =>
-  setPractice((p) => {
-    const arr = [...(p.substitution || [])];
-    const sp = normalizeSubPattern(arr[si]); // ← ] 제거
-    sp.items[slotKey] = (sp.items[slotKey] || []).filter((_, idx) => idx !== ii);
-    arr[si] = sp;
-    return { ...p, substitution: arr };
-  });
-  
+  const deleteSubItem = (si, slotKey, ii) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]); // ← 이전 오타 ] 제거
+      sp.items[slotKey] = (sp.items[slotKey] || []).filter((_, idx) => idx !== ii);
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
+
   const deleteSubPattern = (si) =>
     setPractice((p) => ({
       ...p,
       substitution: (p.substitution || []).filter((_, idx) => idx !== si),
     }));
+
+  // pron_dict (hanzi, pron)
+  const addPronDict = (si) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]);
+      sp.pron_dict = [...(sp.pron_dict || []), { hanzi: "", pron: "" }];
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
+
+  const updatePronDict = (si, di, field, value) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]);
+      const list = [...(sp.pron_dict || [])];
+      list[di] = { ...list[di], [field]: value };
+      sp.pron_dict = list;
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
+
+  const deletePronDict = (si, di) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]);
+      sp.pron_dict = (sp.pron_dict || []).filter((_, idx) => idx !== di);
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
+
+  // meaning_dict (hanzi, ko)
+  const addMeaningDict = (si) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]);
+      sp.meaning_dict = [...(sp.meaning_dict || []), { hanzi: "", ko: "" }];
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
+
+  const updateMeaningDict = (si, di, field, value) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]);
+      const list = [...(sp.meaning_dict || [])];
+      list[di] = { ...list[di], [field]: value };
+      sp.meaning_dict = list;
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
+
+  const deleteMeaningDict = (si, di) =>
+    setPractice((p) => {
+      const arr = [...(p.substitution || [])];
+      const sp = normalizeSubPattern(arr[si]);
+      sp.meaning_dict = (sp.meaning_dict || []).filter((_, idx) => idx !== di);
+      arr[si] = sp;
+      return { ...p, substitution: arr };
+    });
 
   // =============================
   // 요약 관리
@@ -858,6 +925,20 @@ const deleteSubItem = (si, slotKey, ii) =>
                     fullWidth
                     sx={{ mb: 2 }}
                   />
+                  <TextField
+                    label="pron_pattern (예: {slot1}{slot2} → 한글 발음 템플릿, 선택)"
+                    value={sp.pron_pattern || ""}
+                    onChange={(e) => updateSubField(si, "pron_pattern", e.target.value)}
+                    fullWidth
+                    sx={{ mb: 1 }}
+                  />
+                  <TextField
+                    label="meaning_pattern (예: 한국어 문장 템플릿, 선택)"
+                    value={sp.meaning_pattern || ""}
+                    onChange={(e) => updateSubField(si, "meaning_pattern", e.target.value)}
+                    fullWidth
+                    sx={{ mb: 2 }}
+                  />
 
                   {(sp.slots || []).map((slotKey) => (
                     <Box key={slotKey} sx={{ border: "1px dashed #bbb", p: 1.5, mb: 2, borderRadius: 1 }}>
@@ -919,6 +1000,68 @@ const deleteSubItem = (si, slotKey, ii) =>
                       <Button size="small" onClick={() => addSubItem(si, slotKey)}>+ 교체어 추가</Button>
                     </Box>
                   ))}
+
+                  {/* 발음 사전: 고정 한자 → 한글 발음 */}
+                  <Box sx={{ borderTop: "1px dashed #ddd", pt: 1.5, mt: 1.5 }}>
+                    <Typography variant="subtitle2">발음 사전 (pron_dict)</Typography>
+                    {(sp.pron_dict || []).map((d, di) => (
+                      <Grid container spacing={1} key={`pron-${di}`} sx={{ mt: 0.5 }}>
+                        <Grid item xs={6}>
+                          <TextField
+                            label="hanzi"
+                            value={d.hanzi || ""}
+                            onChange={(e) => updatePronDict(si, di, "hanzi", e.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={5}>
+                          <TextField
+                            label="pron(한글 발음)"
+                            value={d.pron || ""}
+                            onChange={(e) => updatePronDict(si, di, "pron", e.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={1}>
+                          <IconButton onClick={() => deletePronDict(si, di)} color="error">
+                            <DeleteIcon />
+                          </IconButton>
+                        </Grid>
+                      </Grid>
+                    ))}
+                    <Button size="small" onClick={() => addPronDict(si)}>+ 발음 사전 추가</Button>
+                  </Box>
+
+                  {/* 의미 사전: 고정 한자 → 한국어 뜻 */}
+                  <Box sx={{ borderTop: "1px dashed #ddd", pt: 1.5, mt: 1.5 }}>
+                    <Typography variant="subtitle2">의미 사전 (meaning_dict)</Typography>
+                    {(sp.meaning_dict || []).map((d, di) => (
+                      <Grid container spacing={1} key={`mean-${di}`} sx={{ mt: 0.5 }}>
+                        <Grid item xs={6}>
+                          <TextField
+                            label="hanzi"
+                            value={d.hanzi || ""}
+                            onChange={(e) => updateMeaningDict(si, di, "hanzi", e.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={5}>
+                          <TextField
+                            label="ko(한국어)"
+                            value={d.ko || ""}
+                            onChange={(e) => updateMeaningDict(si, di, "ko", e.target.value)}
+                            fullWidth
+                          />
+                        </Grid>
+                        <Grid item xs={1}>
+                          <IconButton onClick={() => deleteMeaningDict(si, di)} color="error">
+                            <DeleteIcon />
+                          </IconButton>
+                        </Grid>
+                      </Grid>
+                    ))}
+                    <Button size="small" onClick={() => addMeaningDict(si)}>+ 의미 사전 추가</Button>
+                  </Box>
 
                   <Button size="small" onClick={() => addSubSlot(si)}>+ 슬롯 추가</Button>
                   <IconButton
