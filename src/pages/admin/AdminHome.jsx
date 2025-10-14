@@ -86,6 +86,12 @@ export default function AdminHome() {
         </Button>
       </Box>
 
+            <Paper elevation={3} sx={{ mb: 4 }}>
+<Button variant="outlined" onClick={() => navigate("/admin/everyday")} sx={{ textTransform: "none" }}>
+  중국어 공부 관리(Everyday)
+</Button>
+        </Paper>
+
       {/* 유닛 목록 */}
       <Paper elevation={3} sx={{ mb: 4 }}>
         <Typography variant="h6" sx={{ p: 2, borderBottom: "1px solid #eee" }}>

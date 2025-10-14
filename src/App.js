@@ -21,10 +21,11 @@ import ConversationPage from "./pages/ConversationPage";
 import PracticePage from "./pages/PracticePage";
 import SummaryPage from "./pages/SummaryPage";
 import PronunciationPage from "./pages/PronunciationPage";
-
+import EverydayPage from "./pages/EverydayPage";
 // === 관리자 페이지 ===
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
+import EverydayAdmin from "./pages/admin/EverydayAdmin";
 
 // === MUI 폰트 테마 설정 ===
 const theme = createTheme({
@@ -79,7 +80,9 @@ export default function App() {
             <Route path="/units/:id/summary" element={<SummaryPage />} />
 
             {/* 관리자 페이지 */}
+            <Route path="/everyday" element={<EverydayPage />} />
             <Route path="/admin" element={<AdminHome />} />
+              <Route path="/admin/everyday" element={<EverydayAdmin />} />
             <Route path="/admin/unit-edit" element={<UnitEditPage />} />
           </Routes>
         </main>
