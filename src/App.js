@@ -22,6 +22,7 @@ import PracticePage from "./pages/PracticePage";
 import SummaryPage from "./pages/SummaryPage";
 import PronunciationPage from "./pages/PronunciationPage";
 import EverydayPage from "./pages/EverydayPage";
+
 // === 관리자 페이지 ===
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
@@ -42,18 +43,9 @@ const theme = createTheme({
   components: {
     MuiCssBaseline: {
       styleOverrides: `
-        .chinese-text {
-          font-family: 'ZCOOL KuaiLe', sans-serif !important;
-          font-size: 4rem !important;
-        }
-        .chinese-text2 {
-          font-family: 'ZCOOL KuaiLe', sans-serif !important;
-          font-size: 3rem !important;
-        }
-        .chinese-text3 {
-          font-family: 'ZCOOL KuaiLe', sans-serif !important;
-          font-size: 2rem !important;
-        }
+        .chinese-text { font-family: 'ZCOOL KuaiLe', sans-serif !important; font-size: 4rem !important; }
+        .chinese-text2 { font-family: 'ZCOOL KuaiLe', sans-serif !important; font-size: 3rem !important; }
+        .chinese-text3 { font-family: 'ZCOOL KuaiLe', sans-serif !important; font-size: 2rem !important; }
       `,
     },
   },
@@ -82,8 +74,9 @@ export default function App() {
             {/* 관리자 페이지 */}
             <Route path="/everyday" element={<EverydayPage />} />
             <Route path="/admin" element={<AdminHome />} />
-              <Route path="/admin/everyday" element={<EverydayAdmin />} />
+            <Route path="/admin/everyday" element={<EverydayAdmin />} />
             <Route path="/admin/unit-edit" element={<UnitEditPage />} />
+            {/* 특정 유닛 수정은 /admin/unit-edit?id=2 처럼 쿼리 사용 */}
           </Routes>
         </main>
       </div>

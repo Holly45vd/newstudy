@@ -17,7 +17,7 @@ const tabs = [
   { label: "홈", path: "" },
   { label: "단어", path: "vocabulary" },
   { label: "문법", path: "grammar" },
-  { label: "문장", path: "sentence" },
+  { label: "교체", path: "sentence" },
   { label: "대화", path: "conversation" },
   { label: "연습", path: "practice" },
   { label: "요약", path: "summary" },

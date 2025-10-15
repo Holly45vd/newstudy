@@ -55,6 +55,8 @@ const normalizePattern = (raw) => {
       pron_dict: raw.pron_dict || [],
       meaning_pattern: raw.meaning_pattern || "",
       meaning_dict: raw.meaning_dict || [],
+      // ⬇ 패턴 자체의 한국어 문장(치환 가능)
+      meaning: raw.meaning || raw.meaning_ko || raw.ko || raw.translation || "",
       tags: raw.tags || [],
     };
   }
@@ -73,6 +75,8 @@ const normalizePattern = (raw) => {
     pron_dict: raw.pron_dict || [],
     meaning_pattern: raw.meaning_pattern || "",
     meaning_dict: raw.meaning_dict || [],
+    // ⬇ 패턴 자체의 한국어 문장(치환 가능)
+    meaning: raw.meaning || raw.meaning_ko || raw.ko || raw.translation || "",
     tags: raw.tags || [],
   };
 };
@@ -386,7 +390,15 @@ export default function SubstitutionPage() {
                   : (pattern.pron_dict && pattern.pron_dict.length > 0
                       ? buildPronByDict(zh, pattern.pron_dict)
                       : pinyinArrayToKorean(makePinyinArrayNoTone(zh)));
+
+              // 한국어 라인: 우선순위 meaning → meaning_pattern → meaning_dict → 슬롯 join
               const meaningLine = (() => {
+                if (pattern.meaning && String(pattern.meaning).trim()) {
+                  const hasSlots = /\{[^}]+\}/.test(pattern.meaning);
+                  return hasSlots
+                    ? buildWithField(pattern.meaning, pattern.slots, sel, "meaning", "____").trim()
+                    : String(pattern.meaning).trim();
+                }
                 if (pattern.meaning_pattern && pattern.meaning_pattern.trim()) {
                   return buildWithField(pattern.meaning_pattern, pattern.slots, sel, "meaning", "____")
                     .replace(/\s+/g, " ")
@@ -454,7 +466,7 @@ export default function SubstitutionPage() {
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="듣기">
-                      <IconButton color="primary" size="small" onClick={() => handleSpeak(zh)} aria-label="중국어 문장 듣기">
+                      <IconButton color="primary" size="small" onClick={() => handleSpeak(zh)} aria-label="중국어 문장 들기">
                         <VolumeUpIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
