@@ -2,6 +2,8 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchUnits } from "../../firebase/firebaseFirestore";
+import { Link as RouterLink } from "react-router-dom";
+
 import {
   Container, Typography, Box, Button, CircularProgress, Paper,
   List, ListItem, ListItemText,
@@ -38,6 +40,14 @@ export default function AdminHome() {
       <Typography variant="h4" fontWeight="bold" gutterBottom>
         관리자 대시보드
       </Typography>
+      <Typography> 
+<Button component={RouterLink} to="/admin/migrate" variant="outlined">
+  데이터 마이그레이션
+</Button>
+<Button component={RouterLink} to="/admin/seed" variant="outlined">
+  Seed
+</Button>
+       </Typography>
       <Typography variant="body1" color="text.secondary" gutterBottom>
         유닛 데이터를 생성/수정합니다.
       </Typography>

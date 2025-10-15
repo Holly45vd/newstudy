@@ -1,11 +1,11 @@
-// src/pages/EverydayPage.jsx
+// src/pages/EverydayPage.jsx — v4.0 (/dailies + /words 정규화 대응)
 import React, { useMemo, useState, useEffect } from "react";
 import {
   Container, Typography, TextField, Box, Chip, Card, CardContent, Stack, Divider, IconButton,
 } from "@mui/material";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import WordDetailModal from "../components/WordDetailModal";
-import { listEverydayWordsFlat } from "../firebase/firebaseFirestore";
+import { listDailies, fetchWordsByIds } from "../firebase/firebaseFirestore";
 import { useSpeechSynthesis } from "react-speech-kit";
 
 // ✅ 병음 옆 한국어 발음 추출 헬퍼
@@ -21,6 +21,35 @@ const getKoPron = (w) => {
   return "";
 };
 
+// ✅ 모달 호환 매핑(신규 스키마 우선, 구키 폴백)
+const mapToModalWord = (v = {}) => {
+  const zh = v.zh ?? v.hanzi ?? v.id ?? v.cn ?? "";
+  const pinyin = v.pinyin ?? v.py ?? "";
+  const ko = v.ko ?? v.meaning ?? "";
+  const sentence = v.sentence ?? v.exampleZh ?? v.example_zh ?? "";
+  const sentencePinyin = v.sentencePinyin ?? v.examplePy ?? v.example_pinyin ?? "";
+  const sentenceKo = v.sentenceKo ?? v.exampleKo ?? v.example_ko ?? "";
+  const sentenceKoPronunciation =
+    v.sentenceKoPronunciation ?? v.sentencePron ?? v.sentencePronunciation ?? "";
+  const extensions = Array.isArray(v.extensions)
+    ? v.extensions.map(e => ({ ...e, koPron: e.koPron ?? e.pron ?? "" }))
+    : [];
+  const pronunciation = Array.isArray(v.pronunciation) ? v.pronunciation : [];
+  const grammar = Array.isArray(v.grammar) ? v.grammar : [];
+  const keyPoints = Array.isArray(v.keyPoints) ? v.keyPoints : [];
+  const pos = v.pos ?? "";
+  const tags = Array.isArray(v.tags) ? v.tags : [];
+
+  return {
+    zh, pinyin, ko,
+    sentence, sentencePinyin, sentenceKo,
+    sentenceKoPronunciation, // 모달 신키
+    sentencePron: sentenceKoPronunciation, // 모달 구키 폴백
+    extensions, pronunciation, grammar, keyPoints, pos, tags,
+    koPronunciation: v.koPronunciation ?? v.koPron ?? "", // 리스트 표시용
+  };
+};
+
 export default function EverydayPage() {
   const [query, setQuery] = useState("");
   const [posFilter, setPosFilter] = useState(null);
@@ -32,28 +61,29 @@ export default function EverydayPage() {
 
   // 중국어 음성 엔진 (Simplified Chinese)
   const chineseVoice = useMemo(() => {
-   const list = voices && voices.length ? voices : (window.speechSynthesis?.getVoices?.() || []);
-   const score = (v) => {
-     const n = (v.name||"").toLowerCase(); const l = (v.lang||"").toLowerCase();
-     let s=0; if(l.startsWith("zh")) s+=5; if(l.includes("cmn")) s+=2; if(l.includes("zh-cn")||l.includes("cmn-hans")) s+=2;
-     if(/chinese|中文|普通话|国语/.test(n)) s+=2; return s;
-   };
-   return [...list].sort((a,b)=>score(b)-score(a))[0] || null;
- }, [voices]);
+    const list = voices && voices.length ? voices : (window.speechSynthesis?.getVoices?.() || []);
+    const score = (v) => {
+      const n = (v.name||"").toLowerCase(); const l = (v.lang||"").toLowerCase();
+      let s=0; if(l.startsWith("zh")) s+=5; if(l.includes("cmn")) s+=2; if(l.includes("zh-cn")||l.includes("cmn-hans")) s+=2;
+      if(/chinese|中文|普通话|国语/.test(n)) s+=2; return s;
+    };
+    return [...list].sort((a,b)=>score(b)-score(a))[0] || null;
+  }, [voices]);
 
+  // ✅ 새 스키마 로드: dailies → wordIds → /words
   useEffect(() => {
     (async () => {
       try {
-        const flat = await listEverydayWordsFlat();
-        const byDate = flat.reduce((acc, w) => {
-          const k = w.date || "unknown";
-          (acc[k] ||= []).push(w);
-          return acc;
-        }, {});
-        const grouped = Object.entries(byDate)
-          .map(([date, words]) => ({ date, words }))
-          .sort((a, b) => (a.date < b.date ? 1 : -1));
-        setDays(grouped);
+        const groups = await listDailies(); // [{date, wordIds:[]}] (최신 날짜 우선)
+        const out = [];
+        for (const g of groups) {
+          const ids = Array.isArray(g.wordIds) ? g.wordIds : [];
+          const words = ids.length ? await fetchWordsByIds(ids) : [];
+          out.push({ date: g.date, words });
+        }
+        // 안전하게 최신 날짜 우선 정렬
+        out.sort((a, b) => (a.date < b.date ? 1 : -1));
+        setDays(out);
       } catch (e) {
         console.error(e);
         setDays([]);
@@ -91,7 +121,7 @@ export default function EverydayPage() {
   }, [days, query, posFilter, tagFilter]);
 
   const onSelectWord = (w) => {
-    setSelectedWord(w);
+    setSelectedWord(mapToModalWord(w));
     setOpen(true);
   };
 
@@ -103,7 +133,7 @@ export default function EverydayPage() {
   return (
     <Container maxWidth="md" sx={{ pb: 8 }}>
       <Typography variant="h5" sx={{ fontWeight: 700, mb: 2 }}>
-
+        매일 단어
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         매일 정리한 단어를 검색/필터링하고, 단어를 클릭하면 상세를 확인하세요.
@@ -187,21 +217,22 @@ export default function EverydayPage() {
                     key={`${day.date}-${w.zh}-${idx}`}
                     sx={{
                       display: "grid",
- gridTemplateColumns: "minmax(96px, 1fr) minmax(0, 3fr) auto",
- "@media (max-width:600px)": {
-   gridTemplateColumns: "1fr",        // 모바일: 세로 배치
-   rowGap: 6
- },
+                      gridTemplateColumns: "minmax(96px, 1fr) minmax(0, 3fr) auto",
+                      "@media (max-width:600px)": {
+                        gridTemplateColumns: "1fr",
+                        rowGap: 6
+                      },
                       gap: 1,
                       alignItems: "center",
-                      "&:hover": { backgroundColor: "#fafafa" },  "@media (hover: none)": { "&:hover": { backgroundColor: "transparent" } },
+                      "&:hover": { backgroundColor: "#fafafa" },
+                      "@media (hover: none)": { "&:hover": { backgroundColor: "transparent" } },
                       p: 0.5,
                       borderRadius: 1,
                     }}
                   >
                     {/* 중국어 + 스피커 */}
                     <Stack direction="row" alignItems="center" spacing={0.5}>
-                      <Typography sx={{  cursor: "pointer" }} onClick={() => onSelectWord(w)}>
+                      <Typography sx={{ cursor: "pointer" }} onClick={() => onSelectWord(w)}>
                         {w.zh}
                       </Typography>
                       <IconButton
@@ -215,7 +246,7 @@ export default function EverydayPage() {
                     </Stack>
 
                     {/* 병음 + 한글 발음 + 뜻 */}
-                    <Typography variant="body2" color="text.secondary"  sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}>
                       {(w.pinyin || "").trim()}
                       {(() => {
                         const koP = getKoPron(w);

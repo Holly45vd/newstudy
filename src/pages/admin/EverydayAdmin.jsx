@@ -1,3 +1,4 @@
+// src/pages/admin/EverydayAdmin.jsx — v4.0 (words 정규화 + dailies 참조)
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Container, Grid, Paper, Stack, TextField, Typography, Button,
@@ -9,28 +10,35 @@ import SaveIcon from "@mui/icons-material/Save";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import EditIcon from "@mui/icons-material/Edit";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+
 import {
-  upsertEverydayWord,
-  listEverydayWordsGroupedByDate,
-  deleteEverydayWord,
-  importEverydayGroupsBulk,            // ✅ 일괄 업로드 추가
+  // 새 스키마 전용 API
+  listDailies,
+  fetchWordsByIds,
+  upsertWord,
+  setDailyWords,
+  deleteEverydayWord,       // 날짜에서 연결만 제거(단어는 /words 유지)
+  importEverydayGroupsBulk, // [{"date","words":[...]}] → /words upsert + /dailies 세팅
 } from "../../firebase/firebaseFirestore";
 
+// ----- 폼 기본값 -----
 const emptyForm = {
-  date: "",       // YYYY-MM-DD
+  date: "",           // YYYY-MM-DD
   zh: "",
   pinyin: "",
   ko: "",
   pos: "",
-  tags: "",       // 콤마 구분 입력 → 저장 시 배열 변환
+  tags: "",           // 콤마 구분 입력 → 저장 시 배열로 변환
   sentence: "",
   sentencePinyin: "",
   sentenceKo: "",
+  sentenceKoPronunciation: "", // ✅ 새 스키마: 문장 한국어 발음(구: sentencePron)
+
   grammar: `[
-  { "term": "구조", "structure": "", "note": "" }
+  { "term": "구조", "pinyin": "", "pron": "", "desc": "" }
 ]`,
   extensions: `[
-  { "zh": "", "pinyin": "", "ko": "" }
+  { "zh": "", "pinyin": "", "ko": "", "koPron": "" }
 ]`,
   keyPoints: `[
   "핵심 포인트 예시"
@@ -45,24 +53,64 @@ export default function EverydayAdmin() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
 
-  const [groups, setGroups] = useState([]); // [{date, words:[...]}]
-  const [query, setQuery] = useState("");   // 한국어/중국어/병음 검색
+  // [{ date, wordIds:[], words:[...] }]
+  const [groups, setGroups] = useState([]);
+  const [query, setQuery] = useState("");
 
-  // JSON 인라인 편집 모달 상태
+  // JSON 인라인 편집 모달
   const [jsonOpen, setJsonOpen] = useState(false);
   const [jsonText, setJsonText] = useState("");
-  const [jsonMeta, setJsonMeta] = useState({ date: "", originalZh: "" }); // 리네임 감지용
+  const [jsonMeta, setJsonMeta] = useState({ date: "", originalId: "" }); // originalId = 원래 단어ID(보통 zh)
 
-  // ✅ 일괄 업로드 상태
+  // 일괄 업로드
   const [bulkJson, setBulkJson] = useState("");
 
-   const load = async () => {
+  // ----- 공통 유틸 -----
+  const fixWordSchema = (raw = {}) => {
+    const w = { ...raw };
+
+    // 최상단/문장 발음 키 보정
+    if (w.sentenceKoPronunciation == null && w.sentencePron != null) {
+      w.sentenceKoPronunciation = w.sentencePron;
+    }
+
+    // 확장 예문 발음 키 보정
+    if (Array.isArray(w.extensions)) {
+      w.extensions = w.extensions.map((e) => {
+        const ex = { ...(e || {}) };
+        if (ex.koPron == null && ex.pron != null) ex.koPron = ex.pron;
+        return ex;
+      });
+    }
+
+    return w;
+  };
+
+  const parseJSON = (text, fallback) => {
+    try {
+      const v = JSON.parse(text || "null");
+      return v ?? fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  // ----- 데이터 로딩 -----
+  const load = async () => {
     setLoading(true);
     try {
-      const data = await listEverydayWordsGroupedByDate();
-      setGroups(Array.isArray(data) ? data : []); // ✅ 방어
+      // 1) 날짜 문서들
+      const ds = await listDailies(); // [{date, wordIds:[]}, ...] 최신 날짜 우선 정렬됨
+      // 2) 각 날짜의 단어 조회
+      const result = [];
+      for (const d of ds) {
+        const ids = Array.isArray(d.wordIds) ? d.wordIds : [];
+        const words = ids.length ? await fetchWordsByIds(ids) : [];
+        result.push({ date: d.date, wordIds: ids, words });
+      }
+      setGroups(result);
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      setMessage({ type: "error", text: e?.message || "로드 실패" });
     } finally {
       setLoading(false);
     }
@@ -72,6 +120,7 @@ export default function EverydayAdmin() {
     load();
   }, []);
 
+  // ----- 필터 -----
   const filteredGroups = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return groups;
@@ -92,43 +141,45 @@ export default function EverydayAdmin() {
 
   const onChange = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const parseJSON = (field, fallback) => {
-    try {
-      const obj = JSON.parse(form[field] || "null");
-      return obj ?? fallback;
-    } catch {
-      return fallback;
-    }
-  };
-
+  // ----- 저장 -----
   const onSave = async () => {
     setMessage(null);
     try {
       if (!form.date) throw new Error("날짜(YYYY-MM-DD)를 입력하세요.");
       if (!form.zh) throw new Error("중국어 단어(zh)를 입력하세요.");
 
-      const payload = {
+      // 1) /words upsert
+      const payload = fixWordSchema({
         zh: form.zh.trim(),
         pinyin: form.pinyin.trim(),
         ko: form.ko.trim(),
         pos: form.pos.trim(),
-        tags: form.tags
-          ? form.tags.split(",").map((s) => s.trim()).filter(Boolean)
-          : [],
+        tags: form.tags ? form.tags.split(",").map((s) => s.trim()).filter(Boolean) : [],
         sentence: form.sentence.trim(),
         sentencePinyin: form.sentencePinyin.trim(),
         sentenceKo: form.sentenceKo.trim(),
-        grammar: parseJSON("grammar", []),
-        extensions: parseJSON("extensions", []),
-        keyPoints: parseJSON("keyPoints", []),
-        pronunciation: parseJSON("pronunciation", []),
-      };
+        sentenceKoPronunciation: form.sentenceKoPronunciation.trim(),
+        grammar: parseJSON(form.grammar, []),
+        extensions: parseJSON(form.extensions, []),
+        keyPoints: parseJSON(form.keyPoints, []),
+        pronunciation: parseJSON(form.pronunciation, []),
+      });
 
-      await upsertEverydayWord(form.date, payload);
+      const wordId = String(payload.id || payload.zh);
+      if (!wordId) throw new Error("wordId를 결정할 수 없습니다(zh가 필요).");
+
+      await upsertWord(wordId, payload);
+
+      // 2) 해당 날짜의 wordIds에 포함되도록 보장
+      const target = groups.find((g) => g.date === form.date);
+      const curIds = target?.wordIds || [];
+      const nextIds = Array.from(new Set([...(curIds || []), wordId]));
+      await setDailyWords(form.date, nextIds);
+
       setMessage({ type: "success", text: "저장 완료" });
       await load();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      setMessage({ type: "error", text: e.message || "저장 실패" });
     }
   };
 
@@ -143,29 +194,39 @@ export default function EverydayAdmin() {
       sentence: w.sentence || "",
       sentencePinyin: w.sentencePinyin || "",
       sentenceKo: w.sentenceKo || "",
+      sentenceKoPronunciation: w.sentenceKoPronunciation || w.sentencePron || "", // ✅ 폴백 허용
+
       grammar: JSON.stringify(w.grammar || [], null, 2),
-      extensions: JSON.stringify(w.extensions || [], null, 2),
+      // ✅ 확장 예문은 koPron 키를 권장(구키 pron 폴백은 저장 시 fixWordSchema에서 처리)
+      extensions: JSON.stringify(
+        Array.isArray(w.extensions)
+          ? w.extensions.map((e) => ({ ...e, koPron: e.koPron ?? e.pron ?? "" }))
+          : [],
+        null,
+        2
+      ),
       keyPoints: JSON.stringify(w.keyPoints || [], null, 2),
       pronunciation: JSON.stringify(w.pronunciation || [], null, 2),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const onDelete = async (date, zh) => {
-    if (!window.confirm(`${date} / ${zh} 단어를 삭제할까요?`)) return;
+  const onDelete = async (date, wordId) => {
+    if (!window.confirm(`${date} / ${wordId} 연결을 삭제할까요? (단어 자체는 /words에 남습니다)`)) return;
     try {
-      await deleteEverydayWord(date, zh);
+      await deleteEverydayWord(date, wordId); // 날짜의 wordIds에서만 제거
       setMessage({ type: "success", text: "삭제 완료" });
       await load();
-      if (form.date === date && form.zh === zh) setForm(emptyForm);
+      if (form.date === date && form.zh === wordId) setForm(emptyForm);
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     }
   };
 
-  // === JSON 인라인 편집 ===
+  // ----- JSON 인라인 편집 -----
   const openJsonEditor = (date, word) => {
-    setJsonMeta({ date, originalZh: word.zh });
+    const wordId = String(word.id || word.zh);
+    setJsonMeta({ date, originalId: wordId });
     setJsonText(JSON.stringify(word, null, 2));
     setJsonOpen(true);
   };
@@ -181,13 +242,27 @@ export default function EverydayAdmin() {
 
   const onSaveJson = async () => {
     try {
-      const parsed = JSON.parse(jsonText);
-      if (!parsed || typeof parsed !== "object") throw new Error("올바른 JSON 객체가 아닙니다.");
-      if (!parsed.zh) throw new Error("필드 'zh'는 필수입니다.");
-      const renamed = parsed.zh !== jsonMeta.originalZh;
+      const parsedRaw = JSON.parse(jsonText);
+      if (!parsedRaw || typeof parsedRaw !== "object") throw new Error("올바른 JSON 객체가 아닙니다.");
+      const parsed = fixWordSchema(parsedRaw);
 
-      await upsertEverydayWord(jsonMeta.date, parsed);
-      if (renamed) await deleteEverydayWord(jsonMeta.date, jsonMeta.originalZh);
+      // upsert (/words)
+      const newId = String(parsed.id || parsed.zh || "");
+      if (!newId) throw new Error("필드 'zh' 또는 'id'는 필수입니다.");
+
+      await upsertWord(newId, parsed);
+
+      // 리네임 감지 → 해당 날짜의 wordIds에서 교체
+      if (newId !== jsonMeta.originalId) {
+        const g = groups.find((x) => x.date === jsonMeta.date);
+        const curIds = g?.wordIds || [];
+        const nextIds = Array.from(new Set([newId, ...curIds.filter((x) => x !== jsonMeta.originalId)]));
+        await setDailyWords(jsonMeta.date, nextIds);
+      } else {
+        // 같은 ID라도 updatedAt 반영
+        const g = groups.find((x) => x.date === jsonMeta.date);
+        await setDailyWords(jsonMeta.date, g?.wordIds || []);
+      }
 
       setMessage({ type: "success", text: "JSON 저장 완료" });
       setJsonOpen(false);
@@ -197,15 +272,15 @@ export default function EverydayAdmin() {
     }
   };
 
-  // ✅ 일괄 업로드 핸들러
+  // ----- 일괄 업로드 -----
   const onBulkImport = async () => {
     setMessage(null);
     try {
       if (!bulkJson.trim()) throw new Error("업로드할 JSON 배열을 입력하세요.");
-      const groups = JSON.parse(bulkJson);
-      if (!Array.isArray(groups)) throw new Error("최상위가 배열이어야 합니다.");
+      const arr = JSON.parse(bulkJson);
+      if (!Array.isArray(arr)) throw new Error("최상위가 배열이어야 합니다.");
       setLoading(true);
-      await importEverydayGroupsBulk(groups);
+      await importEverydayGroupsBulk(arr);
       setMessage({ type: "success", text: "일괄 업로드 완료" });
       setBulkJson("");
       await load();
@@ -266,6 +341,11 @@ export default function EverydayAdmin() {
               <TextField label="문장 (zh)" value={form.sentence} onChange={onChange("sentence")} />
               <TextField label="문장 병음" value={form.sentencePinyin} onChange={onChange("sentencePinyin")} />
               <TextField label="문장 한국어" value={form.sentenceKo} onChange={onChange("sentenceKo")} />
+              <TextField
+                label="문장 한국어 발음(sentenceKoPronunciation)"
+                value={form.sentenceKoPronunciation}
+                onChange={onChange("sentenceKoPronunciation")}
+              />
 
               <Divider />
 
@@ -296,13 +376,13 @@ export default function EverydayAdmin() {
             </Stack>
           </Paper>
 
-          {/* ✅ 일괄 업로드(배열 → Firestore) */}
+          {/* 일괄 업로드(배열 → Firestore) */}
           <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
               일괄 업로드 (배열 붙여넣기)
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              형식: [{"{"}date:"YYYY-MM-DD", words:[{"{"}zh:"伞", ...{"}"}]{"}"}] — <b>StudyPage의 sampleData 그대로 OK</b>
+              형식: [{"{"}date:"YYYY-MM-DD", words:[{"{"}zh:"伞", ...{"}"}]{"}"}] — 기존 샘플 배열 그대로 사용 가능
             </Typography>
             <TextField
               label="groups JSON 배열"
@@ -348,7 +428,7 @@ export default function EverydayAdmin() {
                   <Stack spacing={0.5}>
                     {g.words.map((w) => (
                       <Stack
-                        key={`${g.date}-${w.zh}`}
+                        key={`${g.date}-${w.id || w.zh}`}
                         direction="row"
                         alignItems="center"
                         justifyContent="space-between"
@@ -393,12 +473,13 @@ export default function EverydayAdmin() {
                               <EditIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                          <Tooltip title="삭제">
+                          <Tooltip title="연결 삭제(이 날짜에서만)">
                             <IconButton
                               size="small"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onDelete(g.date, w.zh);
+                                const wid = String(w.id || w.zh);
+                                onDelete(g.date, wid);
                               }}
                             >
                               <DeleteIcon fontSize="small" />
@@ -426,7 +507,7 @@ export default function EverydayAdmin() {
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="h6" sx={{ fontWeight: 700 }}>
-              JSON 편집 — {jsonMeta.date} / {jsonMeta.originalZh}
+              JSON 편집 — {jsonMeta.date} / {jsonMeta.originalId}
             </Typography>
           </Stack>
         </DialogTitle>
@@ -440,7 +521,7 @@ export default function EverydayAdmin() {
             InputProps={{ sx: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 13 } }}
           />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            * 저장 시 <strong>zh</strong>가 변경되면 문서가 자동으로 리네임됩니다(기존 ID 삭제 → 새 ID 생성).
+            * 저장 시 <strong>zh</strong> 또는 <strong>id</strong>가 바뀌면 해당 날짜의 wordIds가 자동 교체됩니다.
           </Typography>
         </DialogContent>
         <DialogActions>

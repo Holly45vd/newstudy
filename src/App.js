@@ -11,6 +11,7 @@ import "./App.css";
 import Navbar from "./components/Navbar";
 
 // === 사용자 페이지 ===
+import MigrationPage from "./pages/admin/MigrationPage";
 import HomePage from "./pages/HomePage";
 import UnitListPage from "./pages/UnitListPage";
 import UnitDetailPage from "./pages/UnitDetailPage";
@@ -27,7 +28,7 @@ import EverydayPage from "./pages/EverydayPage";
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
 import EverydayAdmin from "./pages/admin/EverydayAdmin";
-
+import SeedPage from "./pages/admin/SeedPage";
 // === MUI 폰트 테마 설정 ===
 const theme = createTheme({
   typography: {
@@ -72,10 +73,13 @@ export default function App() {
             <Route path="/units/:id/summary" element={<SummaryPage />} />
 
             {/* 관리자 페이지 */}
+            
+            <Route path="/admin/migrate" element={<MigrationPage />} /> {/* ⬅️ 추가 */}
             <Route path="/everyday" element={<EverydayPage />} />
             <Route path="/admin" element={<AdminHome />} />
             <Route path="/admin/everyday" element={<EverydayAdmin />} />
             <Route path="/admin/unit-edit" element={<UnitEditPage />} />
+            <Route path="/admin/seed" element={<SeedPage />} />
             {/* 특정 유닛 수정은 /admin/unit-edit?id=2 처럼 쿼리 사용 */}
           </Routes>
         </main>

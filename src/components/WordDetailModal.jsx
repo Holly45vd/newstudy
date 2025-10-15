@@ -1,39 +1,39 @@
-// src/components/WordDetailModal.jsx
-import React, { useMemo } from "react";
+// src/components/WordDetailModal.jsx — v4.3.1
+// - pinyinKorean named import로 수정
+// - 문장/예문 확장: koPron 없으면 병음 → 한국어 발음 자동 변환
+// - sourceUrl 표시 + Web Speech API
+
+import React from "react";
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Typography, Stack, Chip, Button, Divider, Box, IconButton
+  Typography, Stack, Chip, Button, Divider, Box, IconButton, Link
 } from "@mui/material";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 
-/** 중국어 음성 강제 선택 + 재생 (react-speech-kit 대신 순수 Web Speech API) */
-function useChineseTTS() {
-  const voices = useMemo(() => {
-    // 일부 브라우저는 getVoices()가 초기엔 빈 배열일 수 있음.
-    // 하지만 호출 자체는 문제없고, 이후 다시 눌렀을 때 로드됨.
-    return window.speechSynthesis?.getVoices?.() || [];
-  }, []);
+// ✅ 병음 → 한국어 발음 변환기 (named export)
+import { freeTextPinyinToKorean } from "../lib/pinyinKorean";
 
+// ===== 중국어 음성 재생 =====
+function useChineseTTS() {
   const pickChineseVoice = () => {
-    const list = window.speechSynthesis?.getVoices?.() || voices || [];
-    // lang이 zh로 시작하는 음성 우선
+    const list = (typeof window !== "undefined" && window.speechSynthesis?.getVoices?.()) || [];
     return (
       list.find((v) => v.lang?.toLowerCase?.().startsWith("zh")) ||
-      list.find((v) => /chinese|mandarin|zh/i.test(v.name || "")) ||
+      list.find((v) => /chinese|mandarin|中文|普通话|國語|国语/i.test(v.name || "")) ||
       null
     );
   };
 
   const speakZh = (text) => {
-    if (!text) return;
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "zh-CN"; // ✅ 중국어 강제
-    const v = pickChineseVoice();
-    if (v) u.voice = v;
-    u.rate = 1;
+    if (!text || typeof window === "undefined") return;
     try {
-      window.speechSynthesis.cancel(); // 겹침 방지
-      window.speechSynthesis.speak(u);
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "zh-CN";
+      const v = pickChineseVoice();
+      if (v) u.voice = v;
+      u.rate = 1;
+      window.speechSynthesis?.cancel();
+      window.speechSynthesis?.speak(u);
     } catch (e) {
       console.warn("TTS speak error:", e);
     }
@@ -42,40 +42,78 @@ function useChineseTTS() {
   return speakZh;
 }
 
+// ===== 최상단 koPron 선택(여러 스키마 폴백) =====
+function pickKoPronTop(word) {
+  if (word?.koPronunciation) return String(word.koPronunciation).trim();
+  if (word?.koPron) return String(word.koPron).trim();
+  const arr = Array.isArray(word?.pronunciation) ? word.pronunciation : [];
+  const exact = arr.find((p) => p?.label && p.label === word?.zh && p?.ko);
+  if (exact?.ko) return String(exact.ko).trim();
+  const first = arr[0]?.ko;
+  if (first) return String(first).trim();
+  return "";
+}
+
+// ===== 병음+한글발음 출력 공용 렌더러 =====
+function PinyinLine({ pinyin, koPron }) {
+  if (!pinyin) return null;
+  return (
+    <Typography color="text.secondary">
+      [{pinyin}{koPron ? ` ${koPron}` : ""}]
+    </Typography>
+  );
+}
+
 export default function WordDetailModal({ open, onClose, word }) {
   const speakZh = useChineseTTS();
-
   if (!word) return null;
 
-  const {
-    zh,
-    pinyin,
-    ko,
-    koPronunciation, // ← 단어의 한국어 발음(예: 'sǎn' -> '산')을 여기에 넣어두면 병음 옆에 표시됨
-    koPron,          // koPron도 허용(둘 중 하나 쓰면 됨)
-    pos,
-    tags = [],
-    sentence,
-    sentencePinyin,
-    sentenceKo,
-    sentenceKoPronunciation, // 문장 병음의 한국어 발음(선택)
-    grammar = [],
-    extensions = [], // [{zh, pinyin, ko, koPronunciation}]
-    keyPoints = [],
-    pronunciation = [], // [{label, pinyin, ko(한국어 발음), tone}]
-  } = word;
+  // ---------- 안전 폴백/정규화 ----------
+  const zh = word.zh ?? word.hanzi ?? word.id ?? "";
+  const pinyin = word.pinyin ?? "";
+  const ko = word.ko ?? word.meaning ?? "";
+  const pos = word.pos ?? "";
+  const tags = Array.isArray(word.tags) ? word.tags : [];
+  const sourceUrl = word.sourceUrl || word.source || "";
 
-  // 단어 한국어 발음 값 합치기
-  const wordKoPron = koPronunciation || koPron || "";
+  // 문장/예문
+  const sentence = word.sentence ?? word.exampleZh ?? word.example_zh ?? "";
+  const sentencePinyin = word.sentencePinyin ?? word.examplePy ?? word.example_pinyin ?? "";
+  const sentenceKo = word.sentenceKo ?? word.exampleKo ?? word.example_ko ?? "";
+  let sentenceKoPronunciation =
+    word.sentenceKoPronunciation ?? word.sentencePron ?? word.sentencePronunciation ?? "";
 
-  const renderPinyinWithKoPron = (pin, koPron) => {
-    if (!pin) return null;
-    return (
-      <Typography color="text.secondary">
-        [{pin}{koPron ? ` ${koPron}` : ""}]
-      </Typography>
-    );
-  };
+  // ✅ 문장 koPron 자동 변환(병음이 있고 koPron 비었을 때)
+  if (!sentenceKoPronunciation && sentencePinyin) {
+    try { sentenceKoPronunciation = freeTextPinyinToKorean(sentencePinyin) || ""; } catch {}
+  }
+
+  const grammar = Array.isArray(word.grammar) ? word.grammar : [];
+
+  // ✅ 예문 확장: pron/koPron/koPronunciation 폴백 + 자동 변환
+  const extensions = Array.isArray(word.extensions)
+    ? word.extensions.map((ex) => {
+        const base = {
+          zh: ex?.zh ?? "",
+          pinyin: ex?.pinyin ?? "",
+          ko: ex?.ko ?? "",
+        };
+        let koPron = ex?.koPron ?? ex?.koPronunciation ?? ex?.pron ?? "";
+        if (!koPron && base.pinyin) {
+          try { koPron = freeTextPinyinToKorean(base.pinyin) || ""; } catch {}
+        }
+        return { ...base, koPron };
+      })
+    : [];
+
+  const keyPoints = Array.isArray(word.keyPoints) ? word.keyPoints : [];
+  const pronunciation = Array.isArray(word.pronunciation)
+    ? word.pronunciation
+    : Array.isArray(word.pronunciation_items)
+    ? word.pronunciation_items
+    : [];
+
+  const wordKoPron = pickKoPronTop(word);
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
@@ -84,34 +122,46 @@ export default function WordDetailModal({ open, onClose, word }) {
         <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
           {/* 중국어 + 스피커 */}
           <Stack direction="row" alignItems="center" spacing={0.5}>
-            <Typography variant="h6" >
-              {zh}
-            </Typography>
+            <Typography variant="h6">{zh}</Typography>
             <IconButton size="small" onClick={() => speakZh(zh)} sx={{ p: 0.3 }}>
               <VolumeUpIcon fontSize="small" />
             </IconButton>
           </Stack>
 
           {/* (병음 한국어발음) : 뜻 */}
-          <Typography variant="body1" color="text.secondary" sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }} >
+          <Typography
+            variant="body1"
+            color="text.secondary"
+            sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}
+          >
             ({pinyin}{wordKoPron ? ` ${wordKoPron}` : ""}) : {ko}
           </Typography>
 
           {pos && <Chip size="small" label={pos} />}
+
           <Stack direction="row" spacing={0.5}>
             {tags.map((t) => (
               <Chip key={t} size="small" variant="outlined" label={t} />
             ))}
           </Stack>
+
+          {!!sourceUrl && (
+            <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+              출처:{" "}
+              <Link href={sourceUrl} target="_blank" rel="noopener noreferrer" underline="hover">
+                열기
+              </Link>
+            </Typography>
+          )}
         </Stack>
       </DialogTitle>
 
       {/* ===== 본문 ===== */}
       <DialogContent dividers>
         {/* --- 문장 --- */}
-        {sentence && (
+        {!!sentence && (
           <>
-            <Typography variant="subtitle1" sx={{  mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
               문장
             </Typography>
             <Stack spacing={0.5} sx={{ mb: 2 }}>
@@ -122,10 +172,10 @@ export default function WordDetailModal({ open, onClose, word }) {
                 </IconButton>
               </Stack>
 
-              {/* 병음 + 한국어 발음(있을 때) */}
-              {renderPinyinWithKoPron(sentencePinyin, sentenceKoPronunciation)}
+              {/* 병음 + (자동 변환된) 한국어 발음 */}
+              <PinyinLine pinyin={sentencePinyin} koPron={sentenceKoPronunciation} />
 
-              {sentenceKo && (
+              {!!sentenceKo && (
                 <Typography color="text.secondary">{sentenceKo}</Typography>
               )}
             </Stack>
@@ -136,16 +186,20 @@ export default function WordDetailModal({ open, onClose, word }) {
         {/* --- 문법 설명 --- */}
         {grammar.length > 0 && (
           <>
-            <Typography variant="subtitle1" sx={{mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
               문법 설명
             </Typography>
             <Stack spacing={1} sx={{ mb: 2 }}>
               {grammar.map((g, idx) => (
                 <Box key={idx}>
-                  <Typography sx={{  display: "inline" }}>
+                  <Typography sx={{ display: "inline" }}>
                     {g.term}
                   </Typography>
-                  <Typography sx={{  display: "inline" }}> ({g.pinyin}{g.pron})  </Typography>
+                  {(g.pinyin || g.pron) && (
+                    <Typography sx={{ display: "inline" }}>
+                      {" "}({g.pinyin || ""}{g.pron ? ` ${g.pron}` : ""})
+                    </Typography>
+                  )}
                   {g.desc && (
                     <Typography sx={{ display: "inline", ml: 1 }}>{g.desc}</Typography>
                   )}
@@ -169,27 +223,24 @@ export default function WordDetailModal({ open, onClose, word }) {
         {/* --- 예문 확장 --- */}
         {extensions.length > 0 && (
           <>
-            <Typography variant="subtitle1" sx={{  mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
               예문 확장
             </Typography>
             <Stack spacing={1} sx={{ mb: 2 }}>
-              {extensions.map((ex, i) => {
-                const exKoPron = ex.koPronunciation || ex.koPron || "";
-                return (
-                  <Box key={i}>
-                    <Stack direction="row" alignItems="center" spacing={0.5}>
-                      <Typography>{ex.zh}</Typography>
-                      <IconButton size="small" onClick={() => speakZh(ex.zh)} sx={{ p: 0.3 }}>
-                        <VolumeUpIcon fontSize="small" />
-                      </IconButton>
-                    </Stack>
-                    {renderPinyinWithKoPron(ex.pinyin, exKoPron)}
-                    {ex.ko && (
-                      <Typography color="text.secondary">{ex.ko}</Typography>
-                    )}
-                  </Box>
-                );
-              })}
+              {extensions.map((ex, i) => (
+                <Box key={i}>
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <Typography>{ex.zh}</Typography>
+                    <IconButton size="small" onClick={() => speakZh(ex.zh)} sx={{ p: 0.3 }}>
+                      <VolumeUpIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                  <PinyinLine pinyin={ex.pinyin} koPron={ex.koPron} />
+                  {!!ex.ko && (
+                    <Typography color="text.secondary">{ex.ko}</Typography>
+                  )}
+                </Box>
+              ))}
             </Stack>
             <Divider sx={{ my: 2 }} />
           </>
@@ -198,7 +249,7 @@ export default function WordDetailModal({ open, onClose, word }) {
         {/* --- 핵심 포인트 --- */}
         {keyPoints.length > 0 && (
           <>
-            <Typography variant="subtitle1" sx={{  mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
               핵심 포인트
             </Typography>
             <Stack spacing={0.5} sx={{ mb: 2 }}>
@@ -213,7 +264,7 @@ export default function WordDetailModal({ open, onClose, word }) {
         {/* --- 발음 정리 --- */}
         {pronunciation.length > 0 && (
           <>
-            <Typography variant="subtitle1" sx={{  mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
               발음 정리
             </Typography>
             <Stack spacing={0.5}>
@@ -221,12 +272,14 @@ export default function WordDetailModal({ open, onClose, word }) {
                 <Stack key={i} direction="row" alignItems="center" spacing={0.5}>
                   <Typography>
                     {p.label} — {p.pinyin}
-                    {p.ko ? ` ${p.ko}` : ""} {/* ← 한국어 발음 필드(p.ko) 함께 표시 */}
+                    {p.ko ? ` ${p.ko}` : ""}
                     {p.tone ? ` / 성조 ${p.tone}` : ""}
                   </Typography>
-                  <IconButton size="small" onClick={() => speakZh(p.label)} sx={{ p: 0.3 }}>
-                    <VolumeUpIcon fontSize="small" />
-                  </IconButton>
+                  {!!p.label && (
+                    <IconButton size="small" onClick={() => speakZh(p.label)} sx={{ p: 0.3 }}>
+                      <VolumeUpIcon fontSize="small" />
+                    </IconButton>
+                  )}
                 </Stack>
               ))}
             </Stack>

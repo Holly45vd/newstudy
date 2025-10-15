@@ -1,0 +1,50 @@
+{
+  "id": "对不起",
+  "sourceUrl": "https://youtu.be/xEktGWc7IRo",
+  "tags": [
+    "감정",
+    "사과"
+  ],
+  "extensions": [
+    {
+      "pinyin": "Duìbuqǐ, wǒ wàng le nǐ de shēngrì.",
+      "ko": "미안해, 네 생일을 잊어버렸어.",
+      "zh": "对不起，我忘了你的生日。",
+      "pron": "뛔이부치, 워 왕 러 니 더 셩르"
+    }
+  ],
+  "sentenceKo": "죄송합니다, 제가 늦었습니다.",
+  "keyPoints": [
+    "‘对不起’는 공식적·정중한 사과 표현",
+    "‘不好意思’는 가벼운 사과나 실수에 사용"
+  ],
+  "pos": "감탄사",
+  "sentence": "对不起，我迟到了。",
+  "sentencePron": "뛔이부치, 워 츠따오 러",
+  "grammar": [
+    {
+      "desc": "상대에게 정중히 사과할 때 사용",
+      "term": "对不起 + 사람",
+      "pinyin": "duìbuqǐ",
+      "pron": "뛔이부치"
+    },
+    {
+      "term": "迟到",
+      "pron": "츠따오",
+      "desc": "지각하다",
+      "pinyin": "chídào"
+    }
+  ],
+  "pinyin": "duìbuqǐ",
+  "pronunciation": [
+    {
+      "tone": "4-0-3",
+      "label": "对不起",
+      "pinyin": "duìbuqǐ",
+      "ko": "뛔이부치"
+    }
+  ],
+  "zh": "对不起",
+  "sentencePinyin": "Duìbuqǐ, wǒ chídào le.",
+  "ko": "미안합니다 / 죄송합니다"
+}

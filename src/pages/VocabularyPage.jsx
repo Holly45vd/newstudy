@@ -1,7 +1,7 @@
-// src/pages/VocabularyPage.jsx (v3.1 — 매일단어 포맷 완전 통합: 리스트/검색/모달 전부 호환)
+// src/pages/VocabularyPage.jsx (v4.0 — /words 정규화 + unit.vocabIds 참조)
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
-import { fetchUnitById } from "../firebase/firebaseFirestore";
+import { fetchUnitById, fetchWordsByIds } from "../firebase/firebaseFirestore";
 import {
   Typography,
   Card,
@@ -69,26 +69,33 @@ function Highlight({ text, query }) {
   );
 }
 
-const STORAGE_KEY = "vocab_page_prefs_v3_1";
+const STORAGE_KEY = "vocab_page_prefs_v4_0";
 
-/// mapToEverydayWord 함수만 교체
+/** ✅ 새 스키마 우선 + 구키 폴백 매핑 */
 const mapToEverydayWord = (v = {}) => {
-  const zh = v.hanzi ?? v.zh ?? v.id ?? "";
+  const zh = v.zh ?? v.hanzi ?? v.id ?? v.cn ?? "";
   const pinyin = v.pinyin ?? v.py ?? "";
-  const ko = v.meaning ?? v.ko ?? "";
-  const koPronunciation = v.koPronunciation ?? v.koPron ?? v.pron_korean ?? "";
+  const ko = v.ko ?? v.meaning ?? "";
+  const koPronunciation =
+    v.koPronunciation ?? v.koPron ?? v.pronunciation_korean ?? v.pron_korean ?? "";
+
   const pos = v.pos ?? v.partOfSpeech ?? "";
   const tags = Array.isArray(v.tags) ? v.tags : [];
 
-  // 예문
+  // 예문(문장)
   const sentence = v.sentence ?? v.exampleZh ?? v.example_zh ?? "";
   const sentencePinyin = v.sentencePinyin ?? v.examplePy ?? v.example_pinyin ?? "";
   const sentenceKo = v.sentenceKo ?? v.exampleKo ?? v.example_ko ?? "";
-  const sentencePron = v.sentencePron ?? v.sentencePronunciation ?? ""; // ✅ 한국어 발음 추가
+  const sentenceKoPronunciation =
+    v.sentenceKoPronunciation ?? v.sentencePron ?? v.sentencePronunciation ?? "";
 
   // 확장/문법/발음
   const grammar = Array.isArray(v.grammar) ? v.grammar : [];
-  const extensions = Array.isArray(v.extensions) ? v.extensions : [];
+  const extensionsRaw = Array.isArray(v.extensions) ? v.extensions : [];
+  const extensions = extensionsRaw.map((e) => ({
+    ...e,
+    koPron: e.koPron ?? e.pron ?? null, // ✅ 키 보정
+  }));
   const keyPoints = Array.isArray(v.keyPoints) ? v.keyPoints : [];
   const pronunciation =
     Array.isArray(v.pronunciation)
@@ -96,6 +103,9 @@ const mapToEverydayWord = (v = {}) => {
       : Array.isArray(v.pronunciation_items)
       ? v.pronunciation_items
       : [];
+
+  // WordDetailModal 하위 호환 위해 sentencePron도 함께 제공
+  const sentencePron = sentenceKoPronunciation;
 
   return {
     zh,
@@ -107,34 +117,35 @@ const mapToEverydayWord = (v = {}) => {
     sentence,
     sentencePinyin,
     sentenceKo,
-    sentencePron,       // ✅ 모달로 넘겨줌
+    sentenceKoPronunciation,
+    sentencePron, // ← 모달 구키 대응
     grammar,
-    extensions,         // 확장 예문은 각 항목의 pron을 WordDetailModal에서 그대로 사용
+    extensions,
     keyPoints,
     pronunciation,
   };
 };
 
-
-/** 리스트/검색/표시에 쓰는 파생 필드 (매일단어/기존 포맷 모두 커버) */
+/** 리스트/검색/표시에 쓰는 파생 필드 */
 const deriveDisplay = (v = {}) => {
-  const zh = v.hanzi ?? v.zh ?? v.id ?? v.cn ?? "";
+  const zh = v.zh ?? v.hanzi ?? v.id ?? v.cn ?? "";
   const pinyin = v.pinyin ?? v.py ?? "";
-  const meaning = v.meaning ?? v.ko ?? "";
+  const meaning = v.ko ?? v.meaning ?? "";
   const pos = v.pos ?? "";
   const tags = Array.isArray(v.tags) ? v.tags : [];
 
-  let pron = "";
-  if (typeof v.pronunciation === "string") {
-    pron = v.pronunciation;
-  } else if (Array.isArray(v.pronunciation) && v.pronunciation.length) {
-    const p0 = v.pronunciation[0];
-    pron = (p0?.ko || p0?.pinyin || "").toString();
-  } else if (Array.isArray(v.pronunciation_items) && v.pronunciation_items.length) {
-    const p0 = v.pronunciation_items[0];
-    pron = (p0?.ko || p0?.pinyin || "").toString();
-  } else if (typeof v.pronunciation_korean === "string") {
-    pron = v.pronunciation_korean;
+  // 표시용 한글발음
+  let pron = v.koPronunciation ?? v.koPron ?? v.pronunciation_korean ?? v.pron_korean ?? "";
+  if (!pron) {
+    if (typeof v.pronunciation === "string") {
+      pron = v.pronunciation;
+    } else if (Array.isArray(v.pronunciation) && v.pronunciation.length) {
+      const p0 = v.pronunciation[0];
+      pron = (p0?.ko || p0?.pinyin || "").toString();
+    } else if (Array.isArray(v.pronunciation_items) && v.pronunciation_items.length) {
+      const p0 = v.pronunciation_items[0];
+      pron = (p0?.ko || p0?.pinyin || "").toString();
+    }
   }
 
   return { zh, pinyin, meaning, pron, pos, tags };
@@ -144,6 +155,7 @@ export default function VocabularyPage() {
   const { id } = useParams();
 
   const [unit, setUnit] = useState(null);
+  const [words, setWords] = useState([]); // ✅ /words에서 로드한 실제 단어들
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -156,6 +168,7 @@ export default function VocabularyPage() {
   const [open, setOpen] = useState(false);
   const [selectedWord, setSelectedWord] = useState(null);
 
+  // 보이스 예열
   useEffect(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     const { speechSynthesis } = window;
@@ -190,20 +203,8 @@ export default function VocabularyPage() {
     return candidates.sort((a, b) => score(b) - score(a))[0] || null;
   }, []);
 
+  // 로컬 표시 설정 복원
   useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const data = await fetchUnitById(id);
-        setUnit(data || {});
-      } catch (e) {
-        setError(e?.message || "데이터 로드 실패");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -212,6 +213,27 @@ export default function VocabularyPage() {
         if (p.show) setShow(p.show);
       }
     } catch {}
+  }, []);
+
+  // ✅ 유닛 로드 → vocabIds로 /words 일괄 조회
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const data = await fetchUnitById(id);
+        setUnit(data || {});
+
+        const ids = Array.isArray(data?.vocabIds) ? data.vocabIds : [];
+        const fetched = ids.length ? await fetchWordsByIds(ids) : [];
+        setWords(fetched);
+      } catch (e) {
+        setError(e?.message || "데이터 로드 실패");
+      } finally {
+        setLoading(false);
+      }
+    };
     load();
   }, [id]);
 
@@ -219,8 +241,9 @@ export default function VocabularyPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, show }));
   }, [view, show]);
 
+  // ✅ 검색 대상: /words에서 로드한 words
   const list = useMemo(() => {
-    const src = unit?.vocabulary || [];
+    const src = Array.isArray(words) ? words : [];
     const q = (debouncedQuery || "").trim().toLowerCase();
     if (!q) return src;
     const pick = (x) => (x ?? "").toString().toLowerCase();
@@ -228,13 +251,24 @@ export default function VocabularyPage() {
     return src.filter((v) => {
       const d = deriveDisplay(v);
       const searchable = [
-        d.zh, d.pinyin, d.pron, d.meaning, d.pos, (d.tags || []).join(" "),
-        v.sentence, v.exampleZh, v.exampleKo, v.examplePy, v.sentenceKo, v.sentencePinyin,
+        d.zh,
+        d.pinyin,
+        d.pron,
+        d.meaning,
+        d.pos,
+        (d.tags || []).join(" "),
+        v.sentence,
+        v.sentenceKo,
+        v.sentencePinyin,
+        v.exampleZh,
+        v.exampleKo,
+        v.examplePy,
       ].filter(Boolean);
       return searchable.some((x) => pick(x).includes(q));
     });
-  }, [unit, debouncedQuery]);
+  }, [words, debouncedQuery]);
 
+  const { speak: speakHook, voices: hookVoices } = useSpeechSynthesis();
   const handleSpeak = useCallback(
     (text) => {
       if (!text) return;
@@ -244,11 +278,11 @@ export default function VocabularyPage() {
       try {
         if (synth) synth.cancel();
         const nativeVoices = synth?.getVoices?.() || [];
-        const voiceList = nativeVoices.length ? nativeVoices : voices;
+        const voiceList = nativeVoices.length ? nativeVoices : hookVoices;
         const zhVoice = voiceList?.find((v) => v.lang === "zh-CN") || pickChineseVoice(voiceList);
 
         if (zhVoice) {
-          speak({ text, voice: zhVoice, rate: defaultRate, pitch: defaultPitch, volume: 1.0 });
+          speakHook({ text, voice: zhVoice, rate: defaultRate, pitch: defaultPitch, volume: 1.0 });
         } else if (synth && "SpeechSynthesisUtterance" in window) {
           const u = new SpeechSynthesisUtterance(text);
           u.lang = "zh-CN";
@@ -261,7 +295,7 @@ export default function VocabularyPage() {
         console.error("TTS 오류:", e);
       }
     },
-    [voices, pickChineseVoice, speak]
+    [hookVoices, pickChineseVoice, speakHook]
   );
 
   const resetFilters = () => {
@@ -407,7 +441,7 @@ export default function VocabularyPage() {
           </Box>
         )}
 
-        {!loading && !error && (!unit?.vocabulary || unit.vocabulary.length === 0) && (
+        {!loading && !error && (!words || words.length === 0) && (
           <Box textAlign="center" py={8}>
             <Typography color="text.secondary">단어 데이터가 없습니다.</Typography>
           </Box>
@@ -566,7 +600,7 @@ export default function VocabularyPage() {
         )}
       </Box>
 
-      {/* 상세 팝업: 매일단어 포맷 모달 재사용 */}
+      {/* 상세 팝업: 정규화 스키마 + 구키 폴백 매핑 후 전달 */}
       <WordDetailModal open={open} onClose={() => setOpen(false)} word={selectedWord} />
     </Box>
   );
