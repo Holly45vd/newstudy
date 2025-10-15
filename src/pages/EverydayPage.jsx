@@ -32,10 +32,14 @@ export default function EverydayPage() {
 
   // 중국어 음성 엔진 (Simplified Chinese)
   const chineseVoice = useMemo(() => {
-    if (!voices || voices.length === 0) return null;
-    // zh-CN, zh-TW 계열 음성 우선
-    return voices.find(v => v.lang.startsWith("zh")) || voices[0];
-  }, [voices]);
+   const list = voices && voices.length ? voices : (window.speechSynthesis?.getVoices?.() || []);
+   const score = (v) => {
+     const n = (v.name||"").toLowerCase(); const l = (v.lang||"").toLowerCase();
+     let s=0; if(l.startsWith("zh")) s+=5; if(l.includes("cmn")) s+=2; if(l.includes("zh-cn")||l.includes("cmn-hans")) s+=2;
+     if(/chinese|中文|普通话|国语/.test(n)) s+=2; return s;
+   };
+   return [...list].sort((a,b)=>score(b)-score(a))[0] || null;
+ }, [voices]);
 
   useEffect(() => {
     (async () => {
@@ -183,10 +187,14 @@ export default function EverydayPage() {
                     key={`${day.date}-${w.zh}-${idx}`}
                     sx={{
                       display: "grid",
-                      gridTemplateColumns: "150px 1fr auto",
+ gridTemplateColumns: "minmax(96px, 1fr) minmax(0, 3fr) auto",
+ "@media (max-width:600px)": {
+   gridTemplateColumns: "1fr",        // 모바일: 세로 배치
+   rowGap: 6
+ },
                       gap: 1,
                       alignItems: "center",
-                      "&:hover": { backgroundColor: "#fafafa" },
+                      "&:hover": { backgroundColor: "#fafafa" },  "@media (hover: none)": { "&:hover": { backgroundColor: "transparent" } },
                       p: 0.5,
                       borderRadius: 1,
                     }}
@@ -207,7 +215,7 @@ export default function EverydayPage() {
                     </Stack>
 
                     {/* 병음 + 한글 발음 + 뜻 */}
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="body2" color="text.secondary"  sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}>
                       {(w.pinyin || "").trim()}
                       {(() => {
                         const koP = getKoPron(w);
@@ -218,7 +226,7 @@ export default function EverydayPage() {
                     </Typography>
 
                     {/* 품사 & 태그 */}
-                    <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                    <Stack direction="row" spacing={0.5} justifyContent="flex-end" sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
                       {w.pos && <Chip size="small" label={w.pos} />}
                       {(w.tags || []).map((t) => (
                         <Chip key={t} size="small" variant="outlined" label={t} />

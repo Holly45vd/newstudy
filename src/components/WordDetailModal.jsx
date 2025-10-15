@@ -93,7 +93,7 @@ export default function WordDetailModal({ open, onClose, word }) {
           </Stack>
 
           {/* (병음 한국어발음) : 뜻 */}
-          <Typography variant="body1" color="text.secondary">
+          <Typography variant="body1" color="text.secondary" sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }} >
             ({pinyin}{wordKoPron ? ` ${wordKoPron}` : ""}) : {ko}
           </Typography>
 
