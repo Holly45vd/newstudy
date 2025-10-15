@@ -1,4 +1,4 @@
-// src/pages/EverydayPage.jsx — v4.0 (/dailies + /words 정규화 대응)
+// src/pages/EverydayPage.jsx — v4.1 (날짜 없는 항목 제외)
 import React, { useMemo, useState, useEffect } from "react";
 import {
   Container, Typography, TextField, Box, Chip, Card, CardContent, Stack, Divider, IconButton,
@@ -43,10 +43,10 @@ const mapToModalWord = (v = {}) => {
   return {
     zh, pinyin, ko,
     sentence, sentencePinyin, sentenceKo,
-    sentenceKoPronunciation, // 모달 신키
-    sentencePron: sentenceKoPronunciation, // 모달 구키 폴백
+    sentenceKoPronunciation,
+    sentencePron: sentenceKoPronunciation,
     extensions, pronunciation, grammar, keyPoints, pos, tags,
-    koPronunciation: v.koPronunciation ?? v.koPron ?? "", // 리스트 표시용
+    koPronunciation: v.koPronunciation ?? v.koPron ?? "",
   };
 };
 
@@ -54,7 +54,7 @@ export default function EverydayPage() {
   const [query, setQuery] = useState("");
   const [posFilter, setPosFilter] = useState(null);
   const [tagFilter, setTagFilter] = useState(null);
-  const [days, setDays] = useState([]); // [{date, words:[...]}]
+  const [days, setDays] = useState([]);
   const [open, setOpen] = useState(false);
   const [selectedWord, setSelectedWord] = useState(null);
   const { speak, voices } = useSpeechSynthesis();
@@ -74,14 +74,17 @@ export default function EverydayPage() {
   useEffect(() => {
     (async () => {
       try {
-        const groups = await listDailies(); // [{date, wordIds:[]}] (최신 날짜 우선)
+        const groups = await listDailies(); // [{date, wordIds:[]}]
         const out = [];
+        const hasDate = (d) => typeof d === "string" && d.trim().length > 0;
+
         for (const g of groups) {
+          if (!hasDate(g?.date)) continue; // ✅ 날짜 없는 그룹 스킵
           const ids = Array.isArray(g.wordIds) ? g.wordIds : [];
           const words = ids.length ? await fetchWordsByIds(ids) : [];
           out.push({ date: g.date, words });
         }
-        // 안전하게 최신 날짜 우선 정렬
+
         out.sort((a, b) => (a.date < b.date ? 1 : -1));
         setDays(out);
       } catch (e) {
@@ -105,7 +108,10 @@ export default function EverydayPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const hasDate = (d) => typeof d === "string" && d.trim().length > 0;
+
     return (days || [])
+      .filter((d) => hasDate(d?.date)) // ✅ 날짜 없는 그룹 제거
       .map((d) => ({
         ...d,
         words: (d.words || []).filter((w) => {
@@ -150,21 +156,11 @@ export default function EverydayPage() {
         />
 
         {/* 품사 */}
-        <Stack
-          direction="row"
-          spacing={1}
-          alignItems="center"
-          flexWrap="wrap"
-          sx={{ overflowX: "auto", pb: 0.5 }}
-        >
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ overflowX: "auto", pb: 0.5 }}>
           <Typography variant="body2" sx={{ mr: 1, minWidth: 52 }}>
             품사
           </Typography>
-          <Chip
-            label="전체"
-            variant={!posFilter ? "filled" : "outlined"}
-            onClick={() => setPosFilter(null)}
-          />
+          <Chip label="전체" variant={!posFilter ? "filled" : "outlined"} onClick={() => setPosFilter(null)} />
           {allPos.map((p) => (
             <Chip
               key={p}
@@ -176,21 +172,11 @@ export default function EverydayPage() {
         </Stack>
 
         {/* 태그 */}
-        <Stack
-          direction="row"
-          spacing={1}
-          alignItems="center"
-          flexWrap="wrap"
-          sx={{ overflowX: "auto", pb: 0.5 }}
-        >
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ overflowX: "auto", pb: 0.5 }}>
           <Typography variant="body2" sx={{ mr: 1, minWidth: 52 }}>
             태그
           </Typography>
-          <Chip
-            label="전체"
-            variant={!tagFilter ? "filled" : "outlined"}
-            onClick={() => setTagFilter(null)}
-          />
+          <Chip label="전체" variant={!tagFilter ? "filled" : "outlined"} onClick={() => setTagFilter(null)} />
           {allTags.map((t) => (
             <Chip
               key={t}
@@ -220,7 +206,7 @@ export default function EverydayPage() {
                       gridTemplateColumns: "minmax(96px, 1fr) minmax(0, 3fr) auto",
                       "@media (max-width:600px)": {
                         gridTemplateColumns: "1fr",
-                        rowGap: 6
+                        rowGap: 6,
                       },
                       gap: 1,
                       alignItems: "center",
@@ -246,7 +232,11 @@ export default function EverydayPage() {
                     </Stack>
 
                     {/* 병음 + 한글 발음 + 뜻 */}
-                    <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "normal" }}
+                    >
                       {(w.pinyin || "").trim()}
                       {(() => {
                         const koP = getKoPron(w);
@@ -276,11 +266,7 @@ export default function EverydayPage() {
         )}
       </Stack>
 
-      <WordDetailModal
-        open={open}
-        onClose={() => setOpen(false)}
-        word={selectedWord}
-      />
+      <WordDetailModal open={open} onClose={() => setOpen(false)} word={selectedWord} />
     </Container>
   );
 }
