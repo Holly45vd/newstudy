@@ -53,7 +53,7 @@ export default function ConversationPage() {
     <Box>
       <UnitTabs />
       <Box p={2}>
-        <Typography variant="h5" fontWeight="bold" gutterBottom>
+        <Typography variant="h5" gutterBottom>
           대화 연습
         </Typography>
 
@@ -68,7 +68,6 @@ export default function ConversationPage() {
                     bgcolor: line.speaker === "A" ? "primary.main" : "secondary.main",
                     width: 32,
                     height: 32,
-                    fontSize: 14,
                   }}
                 >
                   {line.speaker || "?"}
@@ -77,7 +76,7 @@ export default function ConversationPage() {
                 <Card elevation={2} sx={{ bgcolor: "grey.50", flex: 1, borderRadius: 2 }}>
                   <CardContent sx={{ p: 2 }}>
                     <Box display="flex" alignItems="center" justifyContent="space-between">
-                      <Typography className="chinese-text2" variant="body1">
+                      <Typography  variant="body1">
                         {line.chinese}
                       </Typography>
                       <IconButton
@@ -91,12 +90,10 @@ export default function ConversationPage() {
 
                     {!!line.pinyin && (
                       <Typography variant="body2" color="text.secondary">
-                        {line.pinyin}
+                        {line.pinyin} / {line.pronunciation}
                       </Typography>
                     )}
-                    {!!line.pronunciation && (
-                      <Typography variant="body2">{line.pronunciation}</Typography>
-                    )}
+                  
                     {!!line.meaning && (
                       <Typography variant="body2" color="text.secondary">
                         {line.meaning}

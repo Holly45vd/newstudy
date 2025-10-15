@@ -1,4 +1,4 @@
-// src/pages/SubstitutionPage.jsx — 리스트 전용, 단순 UI (검색/카드/밀도/TTS슬롯축소 제거)
+// src/pages/SubstitutionPage.jsx — 리스트 전용 v2.0 (한자 크기↓, 볼드 제거, 담백 UI)
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { fetchUnitById } from "../firebase/firebaseFirestore";
@@ -21,10 +21,10 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import TuneIcon from "@mui/icons-material/Tune";
 import { useSpeechSynthesis } from "react-speech-kit";
 import UnitTabs from "../components/tabs/UnitTabs";
-import { pinyin as pinyinPro } from "pinyin-pro"; // 전체 문장 병음 생성용
-import { pinyinArrayToKorean } from "../lib/pinyinKorean"; // 병음배열 → 한국어 발음
+import { pinyin as pinyinPro } from "pinyin-pro";
+import { pinyinArrayToKorean } from "../lib/pinyinKorean";
 
-/** 안전한 replaceAll (폴백) */
+// ---------- 유틸 ----------
 const replaceAll = (text, search, replacement) => {
   if (typeof text !== "string") return "";
   if (typeof text.replaceAll === "function") return text.replaceAll(search, replacement);
@@ -33,7 +33,7 @@ const replaceAll = (text, search, replacement) => {
   return text.replace(re, replacement);
 };
 
-/** item 키 정규화: zh/py/pron/ko → hanzi/pinyin/pronunciation/meaning */
+// item 키 정규화
 const normItem = (it = {}) => ({
   hanzi: it.hanzi ?? it.zh ?? "",
   pinyin: it.pinyin ?? it.py ?? "",
@@ -41,7 +41,7 @@ const normItem = (it = {}) => ({
   meaning: it.meaning ?? it.ko ?? "",
 });
 
-/** 패턴 구조 정규화 (신형/구형 지원) */
+// 패턴 구조 정규화
 const normalizePattern = (raw) => {
   if (!raw) return null;
   if (raw.slot && Array.isArray(raw.items)) {
@@ -53,7 +53,6 @@ const normalizePattern = (raw) => {
       hint_ko: raw.hint_ko || "",
       pron_pattern: raw.pron_pattern || "",
       pron_dict: raw.pron_dict || [],
-      // ★ 추가: 한국어 문장 템플릿/사전
       meaning_pattern: raw.meaning_pattern || "",
       meaning_dict: raw.meaning_dict || [],
       tags: raw.tags || [],
@@ -72,14 +71,13 @@ const normalizePattern = (raw) => {
     hint_ko: raw.hint_ko || "",
     pron_pattern: raw.pron_pattern || "",
     pron_dict: raw.pron_dict || [],
-    // ★ 추가
     meaning_pattern: raw.meaning_pattern || "",
     meaning_dict: raw.meaning_dict || [],
     tags: raw.tags || [],
   };
 };
 
-/** 선택된 슬롯 맵으로 문장/필드 조립 */
+// 슬롯 치환
 const buildWithField = (patternStr, slots, selected, field, placeholder = "____") => {
   let out = patternStr || "";
   slots.forEach((slot) => {
@@ -89,7 +87,7 @@ const buildWithField = (patternStr, slots, selected, field, placeholder = "____"
   return out;
 };
 
-/** pron_dict 기반 한자→발음 라인 구성(패턴 없을 때 폴백) */
+// 발음 사전 치환
 const buildPronByDict = (zh, pronDict = []) => {
   if (!zh || !Array.isArray(pronDict) || pronDict.length === 0) return "";
   let out = zh;
@@ -101,7 +99,7 @@ const buildPronByDict = (zh, pronDict = []) => {
   return out.replace(/\s+/g, " ").trim();
 };
 
-/** ★ meaning_dict 기반 한자→한국어 치환(고정 구간 번역) */
+// 의미 사전 치환
 const buildMeaningByDict = (zh, meaningDict = []) => {
   if (!zh || !Array.isArray(meaningDict) || meaningDict.length === 0) return "";
   let out = zh;
@@ -113,24 +111,24 @@ const buildMeaningByDict = (zh, meaningDict = []) => {
   return out.replace(/\s+/g, " ").trim();
 };
 
-const PREF_KEY = "subs_page_prefs_min"; // 표시 토글만 저장
+const PREF_KEY = "subs_page_prefs_min_v2";
 
 export default function SubstitutionPage() {
   const { id } = useParams();
   const [unit, setUnit] = useState(null);
-  const [selected, setSelected] = useState({}); // { [patternIndex]: { [slotKey]: item } }
+  const [selected, setSelected] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [copied, setCopied] = useState(null); // 복사 피드백용
+  const [copied, setCopied] = useState(null);
 
-  // react-speech-kit
+  // speech
   const { speak, voices } = useSpeechSynthesis();
   const speakingRef = useRef(false);
 
-  // UI 상태
+  // 표시 토글 (기본: 담백)
   const [show, setShow] = useState({ pinyin: true, pron: false, meaning: true });
 
-  // 보이스 로딩(안드/사파리 대응)
+  // 보이스 웜업
   useEffect(() => {
     const synth = window?.speechSynthesis;
     if (!synth) return;
@@ -145,7 +143,6 @@ export default function SubstitutionPage() {
     return () => clearInterval(t);
   }, []);
 
-  // 중국어 보이스 선택
   const pickChineseVoice = useCallback((list) => {
     const arr = Array.isArray(list) ? list : [];
     const score = (v) => {
@@ -192,7 +189,6 @@ export default function SubstitutionPage() {
     run();
   }, [id]);
 
-  // prefs 저장
   useEffect(() => {
     localStorage.setItem(PREF_KEY, JSON.stringify({ show }));
   }, [show]);
@@ -283,7 +279,7 @@ export default function SubstitutionPage() {
     setSelected(next);
   }, [subs]);
 
-  // 병음 만들기
+  // 병음
   const makePinyin = (zh) => {
     try {
       const clean = (zh || "").replace(/_+/g, "").trim();
@@ -293,8 +289,6 @@ export default function SubstitutionPage() {
       return "";
     }
   };
-
-  // 성조 없는 병음 배열
   const makePinyinArrayNoTone = (zh) => {
     try {
       const clean = (zh || "").replace(/_+/g, "").trim();
@@ -329,7 +323,7 @@ export default function SubstitutionPage() {
     <Box>
       <UnitTabs />
 
-      {/* 헤더: 단순화 */}
+      {/* 헤더: 담백 + 볼드 제거 */}
       <Box
         p={2}
         sx={{
@@ -339,13 +333,11 @@ export default function SubstitutionPage() {
           bgcolor: "background.paper",
           borderBottom: 1,
           borderColor: "divider",
-          backdropFilter: "saturate(180%) blur(4px)",
+          backdropFilter: "saturate(160%) blur(3px)",
         }}
       >
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }}>
-          <Typography variant="h5" fontWeight="bold">
-            교체연습 (Unit {id})
-          </Typography>
+          <Typography variant="h5">교체연습 (Unit {id})</Typography>
           <Box sx={{ flexGrow: 1 }} />
           <Tooltip title="모든 패턴에 랜덤 적용">
             <Button startIcon={<ShuffleIcon />} onClick={handleRandomAll} variant="outlined" size="small">
@@ -353,7 +345,7 @@ export default function SubstitutionPage() {
             </Button>
           </Tooltip>
         </Stack>
-        <Stack direction="row" spacing={1} alignItems="center" mt={1.25}>
+        <Stack direction="row" spacing={1} alignItems="center" mt={1}>
           <TuneIcon fontSize="small" />
           <Chip
             size="small"
@@ -376,10 +368,10 @@ export default function SubstitutionPage() {
         </Stack>
       </Box>
 
-      {/* 본문: 리스트 뷰만 */}
+      {/* 본문: 리스트 뷰 */}
       <Box p={2}>
         {!subs.length ? (
-          <Paper sx={{ p: 4, textAlign: "center" }}>
+          <Paper sx={{ p: 4, textAlign: "center" }} variant="outlined">
             <Typography color="text.secondary">등록된 교체연습이 없습니다.</Typography>
           </Paper>
         ) : (
@@ -387,38 +379,27 @@ export default function SubstitutionPage() {
             {subs.map((pattern, pi) => {
               const sel = selected[pi] || {};
               const zh = buildWithField(pattern.pattern, pattern.slots, sel, "hanzi");
-
-              // 1) 병음(성조 표시)
               const py = makePinyin(zh);
-
-              // 2) 발음(우선순위: pron_pattern > pron_dict > 자동변환)
               const pron =
                 pattern.pron_pattern && pattern.pron_pattern.trim().length > 0
                   ? buildWithField(pattern.pron_pattern, pattern.slots, sel, "pronunciation")
                   : (pattern.pron_dict && pattern.pron_dict.length > 0
                       ? buildPronByDict(zh, pattern.pron_dict)
                       : pinyinArrayToKorean(makePinyinArrayNoTone(zh)));
-
-              // 3) 한국어 뜻(우선순위: meaning_pattern > meaning_dict > 슬롯 의미 결합)
               const meaningLine = (() => {
-                // 템플릿이 있으면 슬롯의 meaning으로 채움
                 if (pattern.meaning_pattern && pattern.meaning_pattern.trim()) {
                   return buildWithField(pattern.meaning_pattern, pattern.slots, sel, "meaning", "____")
                     .replace(/\s+/g, " ")
                     .trim();
                 }
-                // 고정 구간 사전이 있으면 한자기반 치환 후 남은 슬롯은 meaning으로 보조
                 if (pattern.meaning_dict && pattern.meaning_dict.length > 0) {
-                  // 1) 한자 문장 기준으로 고정구간을 먼저 한국어로 치환
                   let baseKo = buildMeaningByDict(zh, pattern.meaning_dict);
-                  // 2) 슬롯 선택이 있으면 괄호로 보조 의미 추가(선택)
                   pattern.slots.forEach((s) => {
                     const m = sel?.[s]?.meaning;
                     if (m) baseKo = baseKo.replace("____", m);
                   });
                   return baseKo || "";
                 }
-                // 최후: 선택 슬롯들의 meaning을 단순 결합
                 const joined = pattern.slots.map((s) => sel?.[s]?.meaning).filter(Boolean).join(" / ");
                 return joined;
               })();
@@ -428,9 +409,7 @@ export default function SubstitutionPage() {
                   {/* 헤더 */}
                   <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                     <Stack direction="row" spacing={1} alignItems="center">
-                      <Typography variant="subtitle1" fontWeight={700}>
-                        {pattern.title || `패턴 ${pi + 1}`}
-                      </Typography>
+                      <Typography variant="subtitle1">{pattern.title || `패턴 ${pi + 1}`}</Typography>
                       {(pattern.tags || []).map((t, i) => (
                         <Chip key={i} size="small" label={t} />
                       ))}
@@ -457,9 +436,16 @@ export default function SubstitutionPage() {
 
                   <Divider sx={{ my: 1 }} />
 
-                  {/* 완성 문장 */}
+                  {/* 완성 문장 (한자: 크기↓, 굵기 400 고정) */}
                   <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.25, flexWrap: "wrap" }}>
-                    <Typography variant="h6" className="chinese-text2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                    <Typography
+                      sx={{
+                        lineHeight: 1.25,
+                        fontWeight: 400, // 볼드 제거
+                        fontSize: "clamp(18px, 3.6vw, 26px)", // 한자 크기 축소
+                        letterSpacing: 0,
+                      }}
+                    >
                       {zh}
                     </Typography>
                     <Tooltip title={copied === zh ? "복사됨" : "복사"}>
@@ -474,19 +460,19 @@ export default function SubstitutionPage() {
                     </Tooltip>
                   </Stack>
 
-                  {/* 보조 줄 */}
+                  {/* 보조 줄 (모두 기본 굵기 400) */}
                   {show.pinyin && !!py && (
-                    <Typography variant="body2" sx={{ lineHeight: 1.7 }}>
+                    <Typography variant="body2" sx={{ lineHeight: 1.7, fontWeight: 400 }}>
                       {py}
                     </Typography>
                   )}
                   {show.pron && !!pron && (
-                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7, fontWeight: 400 }}>
                       {pron}
                     </Typography>
                   )}
                   {show.meaning && !!meaningLine && (
-                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7, fontWeight: 400 }}>
                       {meaningLine}
                     </Typography>
                   )}
@@ -495,10 +481,10 @@ export default function SubstitutionPage() {
                   <Divider sx={{ my: 1.25 }} />
                   {pattern.slots.map((slotKey) => (
                     <Box key={slotKey} sx={{ mb: 1.0 }}>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      <Typography variant="subtitle2" color="text.secondary" gutterBottom sx={{ fontWeight: 400 }}>
                         {slotKey} 선택
                       </Typography>
-                      <Stack direction="row" flexWrap="wrap" gap={1} role="listbox" aria-label={`${slotKey} 후보`}>
+                      <Stack direction="row" flexWrap="wrap" gap={0.75} role="listbox" aria-label={`${slotKey} 후보`}>
                         {(pattern.items?.[slotKey] || []).map((item, idx) => {
                           const active = sel?.[slotKey]?.hanzi === item.hanzi;
                           return (
@@ -506,7 +492,7 @@ export default function SubstitutionPage() {
                               key={`${slotKey}-${idx}-${item.hanzi}`}
                               variant={active ? "filled" : "outlined"}
                               color={active ? "primary" : "default"}
-                              label={<span style={{ fontWeight: 600 }}>{item.hanzi}</span>}
+                              label={<span style={{ fontWeight: 400 }}>{item.hanzi}</span>} // 굵기 제거
                               size="small"
                               onClick={() => handleSelect(pi, slotKey, item)}
                               clickable
@@ -524,7 +510,7 @@ export default function SubstitutionPage() {
                         })}
                       </Stack>
                       {sel?.[slotKey] && (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5, fontWeight: 400 }}>
                           {sel[slotKey].pinyin}
                           {sel[slotKey].pronunciation ? ` · ${sel[slotKey].pronunciation}` : ""}
                           {sel[slotKey].meaning ? ` · ${sel[slotKey].meaning}` : ""}

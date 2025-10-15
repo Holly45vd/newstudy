@@ -1,4 +1,4 @@
-// src/pages/VocabularyPage.jsx (UX/UI Upgrade v2 — 슬라이더/음성옵션 제거)
+// src/pages/VocabularyPage.jsx (UX/UI Upgrade v2.2 — 카드 간결화, 한자 크기↓, 굵기 고정)
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
 import { fetchUnitById } from "../firebase/firebaseFirestore";
@@ -17,10 +17,6 @@ import {
   Tooltip,
   Chip,
   Divider,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
   Button,
   Skeleton,
   Table,
@@ -35,8 +31,6 @@ import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
-import SortIcon from "@mui/icons-material/Sort";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { useSpeechSynthesis } from "react-speech-kit";
 import UnitTabs from "../components/tabs/UnitTabs";
 
@@ -53,16 +47,6 @@ const useDebouncedState = (initial, delay = 300) => {
   return [debounced, value, setValue];
 };
 
-// 안전한 replaceAll (폴백)
-const safeReplaceAll = (text, search, replacement) => {
-  if (typeof text !== "string") return "";
-  if (typeof text.replaceAll === "function") return text.replaceAll(search, replacement);
-  const escapeForRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(escapeForRegex(search), "g");
-  return text.replace(re, replacement);
-};
-
-// 검색어 하이라이트 (안전 버전)
 function escapeRegExp(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -75,7 +59,7 @@ function Highlight({ text, query }) {
         p.toLowerCase() === query.toLowerCase() ? (
           <mark
             key={i}
-            style={{ padding: 0, backgroundColor: "transparent", color: "#1976d2", fontWeight: 700 }}
+            style={{ padding: 0, backgroundColor: "transparent", color: "#1976d2" }}
           >
             {p}
           </mark>
@@ -87,7 +71,7 @@ function Highlight({ text, query }) {
   );
 }
 
-const STORAGE_KEY = "vocab_page_prefs_v2";
+const STORAGE_KEY = "vocab_page_prefs_v2_2";
 
 export default function VocabularyPage() {
   const { id } = useParams();
@@ -97,13 +81,12 @@ export default function VocabularyPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // react-speech-kit
+  // speech
   const { speak, voices } = useSpeechSynthesis();
 
   // UI state
   const [debouncedQuery, query, setQuery] = useDebouncedState("", 250);
   const [view, setView] = useState("card"); // card | compact
-  const [sortBy, setSortBy] = useState("hanzi");
   const [show, setShow] = useState({ pinyin: true, pron: true, meaning: true });
 
   // --- 보이스 강제 로딩 (안드로이드 대응) ---
@@ -157,13 +140,11 @@ export default function VocabularyPage() {
       }
     };
 
-    // prefs load (밀도/음성옵션 제거됨)
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const p = JSON.parse(raw);
         if (p.view) setView(p.view);
-        if (p.sortBy) setSortBy(p.sortBy);
         if (p.show) setShow(p.show);
       }
     } catch {}
@@ -171,39 +152,24 @@ export default function VocabularyPage() {
     load();
   }, [id]);
 
-  // --- 환경설정 저장 (밀도/음성옵션 제거됨) ---
   useEffect(() => {
-    const prefs = { view, sortBy, show };
+    const prefs = { view, show };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-  }, [view, sortBy, show]);
+  }, [view, show]);
 
-  // --- 정렬/검색된 단어 리스트 ---
+  // --- 검색 필터링만 (정렬 제거) ---
   const list = useMemo(() => {
     const src = unit?.vocabulary || [];
     const q = (debouncedQuery || "").trim().toLowerCase();
-    let filtered = src;
-    if (q) {
-      filtered = src.filter((v) =>
-        [v.hanzi, v.pinyin, v.pronunciation, v.meaning]
-          .filter(Boolean)
-          .some((x) => String(x).toLowerCase().includes(q))
-      );
-    }
+    if (!q) return src;
+    return src.filter((v) =>
+      [v.hanzi, v.pinyin, v.pronunciation, v.meaning]
+        .filter(Boolean)
+        .some((x) => String(x).toLowerCase().includes(q))
+    );
+  }, [unit, debouncedQuery]);
 
-    const sorter =
-      {
-        hanzi: (a, b) =>
-          String(a.hanzi || "").localeCompare(String(b.hanzi || ""), "zh"),
-        pinyin: (a, b) =>
-          String(a.pinyin || "").localeCompare(String(b.pinyin || "")),
-        meaning: (a, b) =>
-          String(a.meaning || "").localeCompare(String(b.meaning || ""), "ko"),
-      }[sortBy] || ((a, b) => 0);
-
-    return [...filtered].sort(sorter);
-  }, [unit, debouncedQuery, sortBy]);
-
-  // --- 안전 발화 (기본 rate/pitch 고정) ---
+  // --- 안전 발화 ---
   const handleSpeak = useCallback(
     (text) => {
       if (!text) return;
@@ -233,23 +199,19 @@ export default function VocabularyPage() {
     [voices, pickChineseVoice, speak]
   );
 
-  const handleCopy = useCallback(async (vocab) => {
-    try {
-      const text = `${vocab.hanzi} (${vocab.pinyin}) - ${vocab.meaning}`;
-      await navigator.clipboard.writeText(text);
-    } catch {}
-  }, []);
-
   const resetFilters = () => {
     setQuery("");
-    setSortBy("hanzi");
     setView("card");
     setShow({ pinyin: true, pron: true, meaning: true });
   };
 
-  // 고정 치수(밀도 슬라이더 제거에 따른 보수값)
-  const cardHeight = 200;
-  const tableRowHeight = 52;
+  // 유틸: 멀티라인 클램프
+  const clampSx = (lines = 2) => ({
+    display: "-webkit-box",
+    WebkitLineClamp: lines,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+  });
 
   return (
     <Box>
@@ -292,23 +254,6 @@ export default function VocabularyPage() {
             }}
           />
 
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel id="sort-label">
-              <SortIcon sx={{ mr: 0.5 }} />
-              정렬
-            </InputLabel>
-            <Select
-              labelId="sort-label"
-              value={sortBy}
-              label="정렬"
-              onChange={(e) => setSortBy(e.target.value)}
-            >
-              <MenuItem value="hanzi">한자</MenuItem>
-              <MenuItem value="pinyin">병음</MenuItem>
-              <MenuItem value="meaning">뜻(가나다)</MenuItem>
-            </Select>
-          </FormControl>
-
           <ToggleButtonGroup
             size="small"
             value={view}
@@ -326,7 +271,7 @@ export default function VocabularyPage() {
           </Tooltip>
         </Stack>
 
-        {/* 표시 항목 토글만 유지 */}
+        {/* 표시 항목 토글 */}
         <Stack
           direction={{ xs: "column", md: "row" }}
           spacing={1}
@@ -364,8 +309,8 @@ export default function VocabularyPage() {
         {loading && (
           <Grid container spacing={2}>
             {Array.from({ length: 9 }).map((_, i) => (
-              <Grid key={i} item xs={12} sm={6} md={4}>
-                <Card sx={{ borderRadius: 3 }}>
+              <Grid key={i} item xs={12} sm={6} md={4} lg={3}>
+                <Card variant="outlined" sx={{ borderRadius: 2, width: "100%" }}>
                   <CardContent>
                     <Skeleton variant="text" height={32} width="60%" />
                     <Skeleton variant="text" width="40%" />
@@ -404,46 +349,43 @@ export default function VocabularyPage() {
               {list.map((vocab, index) => (
                 <Grid item xs={12} sm={6} md={4} lg={3} key={`${vocab.hanzi}-${index}`}>
                   <Card
-                    elevation={1}
+                    variant="outlined"
                     sx={{
-                      borderRadius: 3,
+                      borderRadius: 2,
+                      width: "100%",
                       textAlign: "left",
-                      transition: "transform 0.18s ease, box-shadow 0.18s ease",
                       p: 1,
-                      height: cardHeight,
                       display: "flex",
                       flexDirection: "column",
-                      justifyContent: "space-between",
-                      "&:hover": { transform: "translateY(-3px)", boxShadow: 6 },
+                      boxShadow: 0,           // 그림자 제거
+                      "&:hover": { boxShadow: 0, bgcolor: "background.default" }, // 과한 hover 제거
                     }}
                   >
-                    <CardContent sx={{ py: 2, px: 2.5 }}>
+                    <CardContent sx={{ py: 1.5, px: 2 }}>
                       {/* 상단: 한자 + 액션 */}
                       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                        <Typography variant="h5" className="chinese-text" sx={{ lineHeight: 1.1 }}>
+                        <Typography
+                          sx={{
+                            lineHeight: 1.1,
+                            wordBreak: "keep-all",
+                            // 한자: 크기 축소 + 반응형. 굵기(두께) 항상 보통
+                            fontSize: "clamp(22px, 4vw, 34px)",
+                            fontWeight: 400,
+                            letterSpacing: 0,
+                          }}
+                        >
                           <Highlight text={vocab.hanzi} query={debouncedQuery} />
                         </Typography>
-                        <Stack direction="row" spacing={0.5}>
-                          <Tooltip title="듣기">
-                            <IconButton
-                              color="primary"
-                              size="small"
-                              onClick={() => handleSpeak(vocab.hanzi)}
-                              aria-label="중국어로 듣기"
-                            >
-                              <VolumeUpIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="복사">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleCopy(vocab)}
-                              aria-label="복사"
-                            >
-                              <ContentCopyIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </Stack>
+                        <Tooltip title="듣기">
+                          <IconButton
+                            color="primary"
+                            size="small"
+                            onClick={() => handleSpeak(vocab.hanzi)}
+                            aria-label="중국어로 듣기"
+                          >
+                            <VolumeUpIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </Stack>
 
                       {/* 중단: 보조 정보 */}
@@ -451,27 +393,26 @@ export default function VocabularyPage() {
                         <Typography
                           variant="subtitle2"
                           color="text.secondary"
-                          sx={{ mt: 1 }}
-                          noWrap
+                          sx={{ mt: 1, ...clampSx(1), fontWeight: 400 }}
                           title={vocab.pinyin}
                         >
-                          <Highlight text={vocab.pinyin} query={debouncedQuery} /> / 
+                          <Highlight text={vocab.pinyin} query={debouncedQuery} />
                         </Typography>
                       )}
                       {show.pron && (
                         <Typography
                           variant="caption"
                           color="text.secondary"
-                          sx={{ opacity: 0.9 }}
-                          noWrap
+                          sx={{ opacity: 0.9, ...clampSx(1), fontWeight: 400 }}
                           title={vocab.pronunciation}
-                        > <Highlight text={vocab.pronunciation} query={debouncedQuery} />
+                        >
+                          <Highlight text={vocab.pronunciation} query={debouncedQuery} />
                         </Typography>
                       )}
 
                       {/* 하단: 의미 */}
                       {show.meaning && (
-                        <Typography variant="body2" sx={{ mt: 1.25 }} noWrap title={vocab.meaning}>
+                        <Typography variant="body2" sx={{ mt: 1.1, ...clampSx(2), fontWeight: 400 }} title={vocab.meaning}>
                           <Highlight text={vocab.meaning} query={debouncedQuery} />
                         </Typography>
                       )}
@@ -481,43 +422,43 @@ export default function VocabularyPage() {
               ))}
             </Grid>
           ) : (
-            // --- 콤팩트 테이블 뷰 ---
-            <TableContainer component={Paper} sx={{ borderRadius: 3, overflow: "hidden" }}>
+            // --- 콤팩트 테이블 뷰(정렬/복사 제거) ---
+            <TableContainer component={Paper} sx={{ borderRadius: 2, overflow: "hidden" }}>
               <Table size="small" stickyHeader>
                 <TableHead>
                   <TableRow sx={{ "& th": { bgcolor: "background.default" } }}>
-                    <TableCell sx={{ width: 120 }}>한자</TableCell>
-                    {show.pinyin && <TableCell sx={{ width: 200 }}>병음</TableCell>}
+                    <TableCell sx={{ width: 140 }}>한자</TableCell>
+                    {show.pinyin && <TableCell sx={{ width: 220 }}>병음</TableCell>}
                     {show.pron && <TableCell>발음</TableCell>}
                     {show.meaning && <TableCell>뜻</TableCell>}
-                    <TableCell align="right" sx={{ width: 100 }}>
-                      동작
-                    </TableCell>
+                    <TableCell align="right" sx={{ width: 80 }}>듣기</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {list.map((vocab, i) => (
-                    <TableRow key={`${vocab.hanzi}-${i}`} hover sx={{ height: tableRowHeight }}>
+                    <TableRow key={`${vocab.hanzi}-${i}`} hover>
                       <TableCell>
-                        <Highlight text={vocab.hanzi} query={debouncedQuery} />
+                        <Typography sx={{ fontWeight: 400, fontSize: "clamp(18px, 2.2vw, 22px)" }}>
+                          <Highlight text={vocab.hanzi} query={debouncedQuery} />
+                        </Typography>
                       </TableCell>
                       {show.pinyin && (
                         <TableCell>
-                          <Typography noWrap title={vocab.pinyin}>
+                          <Typography noWrap title={vocab.pinyin} sx={{ fontWeight: 400 }}>
                             <Highlight text={vocab.pinyin} query={debouncedQuery} />
                           </Typography>
                         </TableCell>
                       )}
                       {show.pron && (
                         <TableCell>
-                          <Typography color="text.secondary" noWrap title={vocab.pronunciation}>
+                          <Typography color="text.secondary" noWrap title={vocab.pronunciation} sx={{ fontWeight: 400 }}>
                             <Highlight text={vocab.pronunciation} query={debouncedQuery} />
                           </Typography>
                         </TableCell>
                       )}
                       {show.meaning && (
                         <TableCell>
-                          <Typography noWrap title={vocab.meaning}>
+                          <Typography noWrap title={vocab.meaning} sx={{ fontWeight: 400 }}>
                             <Highlight text={vocab.meaning} query={debouncedQuery} />
                           </Typography>
                         </TableCell>
@@ -526,11 +467,6 @@ export default function VocabularyPage() {
                         <Tooltip title="듣기">
                           <IconButton size="small" onClick={() => handleSpeak(vocab.hanzi)}>
                             <VolumeUpIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="복사">
-                          <IconButton size="small" onClick={() => handleCopy(vocab)}>
-                            <ContentCopyIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                       </TableCell>

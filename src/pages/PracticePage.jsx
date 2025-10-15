@@ -222,11 +222,11 @@ export default function PracticePage() {
           <Card key={idx} sx={{ mb: 2, borderRadius: 2 }}>
             <CardContent>
               <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
-                <Typography className="chinese-text2" sx={{ fontSize: "1.05rem" }}>
+                <Typography>
                   {item.zh}
                 </Typography>
-                <IconButton size="small" color="primary" onClick={() => speakZh(item.zh)}>
-                  <VolumeUpIcon fontSize="small" />
+                <IconButton color="primary" onClick={() => speakZh(item.zh)}>
+                  <VolumeUpIcon  />
                 </IconButton>
               </Stack>
               <Typography color="text.secondary">뜻: {item.ko}</Typography>
@@ -336,7 +336,7 @@ export default function PracticePage() {
                 <Box key={i}>
                   {/* 한자 + 재생 */}
                   <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography className="chinese-text2" sx={{ fontSize: "1.05rem" }}>
+                    <Typography>
                       {e.zh} 
                     </Typography>
                     <IconButton size="small" color="primary" onClick={() => speakZh(e.zh)}>

@@ -349,7 +349,7 @@ export default function GrammarPage() {
             <Accordion
               expanded={!!expanded[idx]}
               onChange={onToggle(idx)}
-              sx={{ width: "80%", borderRadius: 2, "&:before": { display: "none" } }}
+              sx={{ width: "100%", borderRadius: 2, "&:before": { display: "none" } }}
             >
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Typography variant="subtitle1">
