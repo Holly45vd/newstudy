@@ -24,11 +24,14 @@ import SummaryPage from "./pages/SummaryPage";
 import PronunciationPage from "./pages/PronunciationPage";
 import EverydayPage from "./pages/EverydayPage";
 
+
 // === 관리자 페이지 ===
 import AdminHome from "./pages/admin/AdminHome";
 import UnitEditPage from "./pages/admin/UnitEditPage";
 import EverydayAdmin from "./pages/admin/EverydayAdmin";
 import SeedPage from "./pages/admin/SeedPage";
+import WordsAdminPage from "./pages/admin/WordsAdminPage";
+
 // === MUI 폰트 테마 설정 ===
 const theme = createTheme({
   typography: {
@@ -73,7 +76,7 @@ export default function App() {
             <Route path="/units/:id/summary" element={<SummaryPage />} />
 
             {/* 관리자 페이지 */}
-            
+            <Route path="/admin/words" element={<WordsAdminPage />} />
             <Route path="/admin/migrate" element={<MigrationPage />} /> {/* ⬅️ 추가 */}
             <Route path="/everyday" element={<EverydayPage />} />
             <Route path="/admin" element={<AdminHome />} />

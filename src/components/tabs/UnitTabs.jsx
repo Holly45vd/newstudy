@@ -51,7 +51,7 @@ export default function UnitTabs({ unitOptions }) {
   };
 
   // 유닛 옵션 준비 (prop 없으면 1~30 기본)
-  const defaultUnits = Array.from({ length: 21 }, (_, i) => String(i + 1));
+  const defaultUnits = Array.from({ length: 25 }, (_, i) => String(i + 1));
   const options = (unitOptions && unitOptions.length ? unitOptions : defaultUnits).map(String);
 
   // 현재 id가 옵션에 없으면 포함시켜 UI 오류 방지
