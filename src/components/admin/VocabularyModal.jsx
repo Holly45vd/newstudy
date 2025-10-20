@@ -1,4 +1,8 @@
-// src/components/admin/VocabularyModal.jsx — v4.0 (/words 정규화 + unit.vocabIds 연동)
+// src/components/admin/VocabularyModal.jsx — v4.1-fix
+// Fix: unit의 ID 배열 필드 자동 감지(vocabIds 우선, 없으면 wordIds)
+//      추가/삭제/리네임 시 해당 필드 정확히 갱신(순서 유지)
+//      화면 로드·표시도 유닛 배열 순서 보장
+
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
@@ -10,40 +14,34 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import EditIcon from "@mui/icons-material/Edit";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import AddIcon from "@mui/icons-material/Add";
-import SaveIcon from "@mui/icons-material/Save";
+
 import { useUnitEdit } from "../../pages/admin/UnitEditProvider";
 
+// 기존 헬퍼: /words upsert, words 조회
 import {
   fetchWordsByIds,
   upsertWord,
-  addWordIdsToUnit,
-  removeWordIdFromUnit,
 } from "../../firebase/firebaseFirestore";
 
-// ===== 유틸 =====
-const stringify = (v, fallback = "[]") => {
-  try { return JSON.stringify(v ?? JSON.parse(fallback), null, 2); } catch { return fallback; }
-};
-const toTagsString = (tags) => Array.isArray(tags) ? tags.join(", ") : (tags || "");
+// 👉 유닛 필드 직접 업데이트용(Firestore v9)
+import { db } from "../../firebase/firebaseConfig";
+import {
+  doc, getDoc, updateDoc,
+} from "firebase/firestore";
 
+// ===== 유틸 =====
 const NEW_ITEM_TEMPLATE = {
-  hanzi: "",
+  zh: "",
   pinyin: "",
   ko: "",
   pos: "",
   tags: [],
-
-  // 예문
   sentence: "",
   sentencePinyin: "",
   sentenceKo: "",
-  sentenceKoPronunciation: "",   // ✅ 신키 (구키: sentencePron)
-
-  // 확장/문법
+  sentenceKoPronunciation: "", // 신키
   grammar: [],
-  extensions: [
-    { zh: "", pinyin: "", ko: "", koPron: "" } // ✅ koPron 권장 (구키 pron 폴백 처리)
-  ],
+  extensions: [{ zh: "", pinyin: "", ko: "", koPron: "" }],
   keyPoints: [],
   pronunciation: [], // [{label,pinyin,ko,tone}]
 };
@@ -52,7 +50,7 @@ const NEW_ITEM_TEMPLATE = {
 const fixWordSchema = (raw = {}) => {
   const w = { ...raw };
 
-  // id 결정 보조
+  // id/zh 보완
   if (!w.zh && (w.hanzi || w.id)) w.zh = w.hanzi || w.id;
 
   // 문장 한국어 발음
@@ -72,15 +70,92 @@ const fixWordSchema = (raw = {}) => {
   return w;
 };
 
+// ID 추출(여러 스키마 대응)
+const getId = (v = {}) => String(v.id ?? v.zh ?? v.hanzi ?? "").trim();
+
+// 배열을 유닛의 id 순서대로 정렬
+const orderByIds = (ids = [], words = []) => {
+  const map = new Map(words.map(w => [getId(w), w]));
+  const out = [];
+  const seen = new Set();
+  for (const id of ids.map(String)) {
+    if (seen.has(id)) continue;
+    const w = map.get(id);
+    if (w) { out.push(w); seen.add(id); }
+  }
+  return out;
+};
+
+// ===== 유닛 배열 필드 조작(직접 Firestore 업데이트) =====
+async function readUnitIds(unitId, fieldKey) {
+  const ref = doc(db, "units", String(unitId));
+  const snap = await getDoc(ref);
+  const data = snap.exists() ? snap.data() : {};
+  const arr = Array.isArray(data?.[fieldKey]) ? data[fieldKey] : [];
+  return { ref, data, arr };
+}
+
+async function addIdsToUnit(unitId, fieldKey, newIds = []) {
+  const { ref, arr } = await readUnitIds(unitId, fieldKey);
+  const base = arr.map(String);
+  const extra = newIds.map(String).filter(id => !base.includes(id));
+  const next = [...base, ...extra];
+  if (extra.length > 0) {
+    await updateDoc(ref, { [fieldKey]: next, updatedAt: Date.now() });
+  }
+  return next;
+}
+
+async function removeIdFromUnit(unitId, fieldKey, targetId) {
+  const { ref, arr } = await readUnitIds(unitId, fieldKey);
+  const next = arr.map(String).filter(id => id !== String(targetId));
+  if (next.length !== arr.length) {
+    await updateDoc(ref, { [fieldKey]: next, updatedAt: Date.now() });
+  }
+  return next;
+}
+
+// 리네임(교체): 기존 위치를 유지하면서 wasId → newId로 교체
+async function replaceIdInUnit(unitId, fieldKey, wasId, newId) {
+  const { ref, arr } = await readUnitIds(unitId, fieldKey);
+  const ids = arr.map(String);
+  const i = ids.indexOf(String(wasId));
+  if (i === -1) {
+    // 기존에 없으면 append
+    const appended = [...ids, String(newId)];
+    await updateDoc(ref, { [fieldKey]: appended, updatedAt: Date.now() });
+    return appended;
+  }
+  // 자리 유지 교체, 중복 방지
+  const next = ids.slice();
+  next[i] = String(newId);
+  for (let k = next.length - 1; k >= 0; k--) {
+    if (k !== i && next[k] === String(newId)) next.splice(k, 1);
+  }
+  await updateDoc(ref, { [fieldKey]: next, updatedAt: Date.now() });
+  return next;
+}
+
 export default function VocabularyModal({ open, onClose }) {
-  // UnitEditProvider에서 unitId / vocabIds 기대
+  // UnitEditProvider에서 unitId / unit 제공
   const {
-    unitId: editUnitId,      // ← UnitEditProvider에서 노출되도록 되어 있어야 함
-    unit,                    // { ..., vocabIds: [...] }
-    reloadUnit,              // (선택) 유닛 다시 로드하는 헬퍼가 있으면 사용
+    unitId: editUnitId,
+    unit,              // { ..., vocabIds?:[], wordIds?:[] }
+    reloadUnit,        // optional
   } = useUnitEdit();
 
-  const vocabIds = Array.isArray(unit?.vocabIds) ? unit.vocabIds : [];
+  // 🔑 유닛 배열 필드 자동 감지
+  const idsField = useMemo(() => {
+    if (Array.isArray(unit?.vocabIds)) return "vocabIds";
+    if (Array.isArray(unit?.wordIds)) return "wordIds";
+    // 기본은 vocabIds로 운용
+    return "vocabIds";
+  }, [unit]);
+
+  const unitIds = useMemo(() => {
+    const arr = Array.isArray(unit?.[idsField]) ? unit[idsField] : [];
+    return arr.map(String);
+  }, [unit, idsField]);
 
   // 화면 상태
   const [message, setMessage] = useState(null);
@@ -95,13 +170,14 @@ export default function VocabularyModal({ open, onClose }) {
   // ===== 로딩 =====
   const loadWords = useCallback(async () => {
     try {
-      const fetched = vocabIds.length ? await fetchWordsByIds(vocabIds) : [];
-      setWords(fetched);
+      const fetched = unitIds.length ? await fetchWordsByIds(unitIds) : [];
+      // 유닛의 배열 순서대로 재정렬
+      setWords(orderByIds(unitIds, fetched));
     } catch (e) {
       console.error(e);
       setWords([]);
     }
-  }, [vocabIds]);
+  }, [unitIds]);
 
   useEffect(() => {
     if (!open) return;
@@ -133,7 +209,7 @@ export default function VocabularyModal({ open, onClose }) {
 
   // 항목 클릭 → JSON 모달
   const openJsonEditor = (idx, v) => {
-    const wordId = String(v.id || v.zh || v.hanzi || "");
+    const wordId = getId(v);
     setJsonMeta({ index: idx, originalId: wordId });
     setJsonText(JSON.stringify(v, null, 2));
     setJsonOpen(true);
@@ -146,7 +222,7 @@ export default function VocabularyModal({ open, onClose }) {
     setJsonOpen(true);
   };
 
-  // JSON 저장(신규/수정 → /words upsert + unit.vocabIds 연결)
+  // JSON 저장(신규/수정 → /words upsert + unit.<idsField> 연결)
   const onSaveJson = async () => {
     try {
       const parsedRaw = JSON.parse(jsonText);
@@ -154,23 +230,20 @@ export default function VocabularyModal({ open, onClose }) {
         throw new Error("올바른 JSON 객체가 아닙니다.");
       }
       const parsed = fixWordSchema(parsedRaw);
-      const newId = String(parsed.zh || parsed.hanzi || parsed.id || "").trim();
-      if (!newId) throw new Error("wordId(zh/hanzi/id)가 필요합니다.");
+      const newId = getId(parsed);
+      if (!newId) throw new Error("wordId(zh/hanzi/id) 중 하나는 필수입니다.");
 
       // 1) /words upsert
       await upsertWord(newId, parsed);
 
-      // 2) unit 연결/교체
+      // 2) unit 연결/교체 (정확한 필드에 반영)
       const wasId = jsonMeta.originalId;
       if (!wasId) {
-        // 신규 추가
-        await addWordIdsToUnit(editUnitId, [newId]);
+        await addIdsToUnit(editUnitId, idsField, [newId]); // 신규
       } else if (wasId !== newId) {
-        // 리네임: 기존 제거 + 신규 추가
-        await removeWordIdFromUnit(editUnitId, wasId);
-        await addWordIdsToUnit(editUnitId, [newId]);
+        await replaceIdInUnit(editUnitId, idsField, wasId, newId); // 리네임
       } else {
-        // 동일 ID면 아무 것도 안 해도 됨(업데이트만 반영)
+        // 동일 ID면 연결 변경 없음
       }
 
       setMessage({ type: "success", text: "저장 완료" });
@@ -186,11 +259,11 @@ export default function VocabularyModal({ open, onClose }) {
 
   // 삭제: unit 연결만 제거(문서 보존)
   const onDelete = async (v) => {
-    const wordId = String(v.id || v.zh || v.hanzi || "");
+    const wordId = getId(v);
     if (!wordId) return;
     if (!window.confirm(`${wordId} 단어를 이 유닛에서 제거할까요? (/words 문서는 보존됩니다)`)) return;
     try {
-      await removeWordIdFromUnit(editUnitId, wordId);
+      await removeIdFromUnit(editUnitId, idsField, wordId);
       setMessage({ type: "success", text: "유닛에서 제거 완료" });
       await loadWords();
       if (typeof reloadUnit === "function") await reloadUnit();
@@ -211,7 +284,7 @@ export default function VocabularyModal({ open, onClose }) {
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xl" fullWidth>
-      <DialogTitle>단어 관리 (유닛) — /words 저장 + unit.vocabIds 연결</DialogTitle>
+      <DialogTitle>단어 관리 (유닛) — /words 저장 + unit.{idsField} 연결</DialogTitle>
 
       <DialogContent dividers sx={{ p: 0 }}>
         <Container maxWidth="lg" sx={{ py: 2 }}>
@@ -250,12 +323,12 @@ export default function VocabularyModal({ open, onClose }) {
             <Grid item xs={12}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-                  단어 목록 ({filtered.length} / {words.length})
+                  단어 목록 ({filtered.length} / {words.length}) — 필드: <b>{idsField}</b>
                 </Typography>
 
                 <Stack spacing={1}>
                   {filtered.map((v) => {
-                    const name = v.zh || v.hanzi || v.id || "item";
+                    const name = getId(v) || "item";
                     return (
                       <Stack
                         key={name}
@@ -271,7 +344,7 @@ export default function VocabularyModal({ open, onClose }) {
                       >
                         <Stack direction="row" spacing={1} alignItems="center">
                           <Typography sx={{ fontWeight: 700, minWidth: 80 }}>
-                            {name}
+                            {v.zh ?? v.hanzi ?? v.id}
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
                             {(v.pinyin || "").trim()} — {(v.ko ?? v.meaning ?? "").trim()}
@@ -343,7 +416,7 @@ export default function VocabularyModal({ open, onClose }) {
             }}
           />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            * <b>zh/hanzi/id</b> 중 하나는 반드시 있어야 합니다. 저장 시 /words에 반영되고 현재 유닛에 연결됩니다.
+            * <b>zh/hanzi/id</b> 중 하나는 반드시 있어야 합니다. 저장 시 /words에 반영되고 현재 유닛(<b>{idsField}</b>)에 연결됩니다.
           </Typography>
         </DialogContent>
         <DialogActions>

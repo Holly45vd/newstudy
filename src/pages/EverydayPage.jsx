@@ -1,4 +1,7 @@
-// src/pages/EverydayPage.jsx — v4.1 (날짜 없는 항목 제외)
+// src/pages/EverydayPage.jsx — v4.2
+// 변경점: fetchWordsByIds 결과를 dailies.wordIds 순서대로 재정렬(Stable ordering)
+//        + 중복 제거, 날짜 없는 그룹 제외(이전 요청 반영)
+
 import React, { useMemo, useState, useEffect } from "react";
 import {
   Container, Typography, TextField, Box, Chip, Card, CardContent, Stack, Divider, IconButton,
@@ -13,13 +16,16 @@ const getKoPron = (w) => {
   if (!w) return "";
   if (w.koPronunciation) return String(w.koPronunciation).trim();
   if (Array.isArray(w.pronunciation)) {
-    const exact = w.pronunciation.find(p => p?.label && p.label === w.zh && p.ko);
+    const exact = w.pronunciation.find((p) => p?.label && p.label === w.zh && p.ko);
     if (exact?.ko) return String(exact.ko).trim();
     const first = w.pronunciation[0]?.ko;
     if (first) return String(first).trim();
   }
   return "";
 };
+
+// ✅ 키 추출(여러 스키마 대응)
+const getId = (w) => String(w?.id ?? w?.docId ?? w?._id ?? w?.zh ?? "");
 
 // ✅ 모달 호환 매핑(신규 스키마 우선, 구키 폴백)
 const mapToModalWord = (v = {}) => {
@@ -32,7 +38,7 @@ const mapToModalWord = (v = {}) => {
   const sentenceKoPronunciation =
     v.sentenceKoPronunciation ?? v.sentencePron ?? v.sentencePronunciation ?? "";
   const extensions = Array.isArray(v.extensions)
-    ? v.extensions.map(e => ({ ...e, koPron: e.koPron ?? e.pron ?? "" }))
+    ? v.extensions.map((e) => ({ ...e, koPron: e.koPron ?? e.pron ?? "" }))
     : [];
   const pronunciation = Array.isArray(v.pronunciation) ? v.pronunciation : [];
   const grammar = Array.isArray(v.grammar) ? v.grammar : [];
@@ -41,36 +47,70 @@ const mapToModalWord = (v = {}) => {
   const tags = Array.isArray(v.tags) ? v.tags : [];
 
   return {
-    zh, pinyin, ko,
-    sentence, sentencePinyin, sentenceKo,
+    zh,
+    pinyin,
+    ko,
+    sentence,
+    sentencePinyin,
+    sentenceKo,
     sentenceKoPronunciation,
     sentencePron: sentenceKoPronunciation,
-    extensions, pronunciation, grammar, keyPoints, pos, tags,
+    extensions,
+    pronunciation,
+    grammar,
+    keyPoints,
+    pos,
+    tags,
     koPronunciation: v.koPronunciation ?? v.koPron ?? "",
   };
+};
+
+// ✅ IDs 순서대로 결과를 재정렬 + 중복 제거
+const orderWordsByIds = (ids = [], words = []) => {
+  const idStrs = ids.map((x) => String(x));
+  const map = new Map(words.map((w) => [getId(w), w]));
+  const seen = new Set();
+  const ordered = [];
+
+  for (const id of idStrs) {
+    if (seen.has(id)) continue; // 같은 ID 중복 방지
+    const w = map.get(id);
+    if (w) {
+      ordered.push(w);
+      seen.add(id);
+    }
+  }
+
+  // 만약 ids에 없지만 불러온 단어가 추가로 있다면(예외 상황), 맨 뒤에 붙이지 않음 → dailies 정의를 신뢰
+  return ordered;
 };
 
 export default function EverydayPage() {
   const [query, setQuery] = useState("");
   const [posFilter, setPosFilter] = useState(null);
   const [tagFilter, setTagFilter] = useState(null);
-  const [days, setDays] = useState([]);
+  const [days, setDays] = useState([]); // [{ date, words }]
   const [open, setOpen] = useState(false);
   const [selectedWord, setSelectedWord] = useState(null);
   const { speak, voices } = useSpeechSynthesis();
 
   // 중국어 음성 엔진 (Simplified Chinese)
   const chineseVoice = useMemo(() => {
-    const list = voices && voices.length ? voices : (window.speechSynthesis?.getVoices?.() || []);
+    const list = voices && voices.length ? voices : window.speechSynthesis?.getVoices?.() || [];
     const score = (v) => {
-      const n = (v.name||"").toLowerCase(); const l = (v.lang||"").toLowerCase();
-      let s=0; if(l.startsWith("zh")) s+=5; if(l.includes("cmn")) s+=2; if(l.includes("zh-cn")||l.includes("cmn-hans")) s+=2;
-      if(/chinese|中文|普通话|国语/.test(n)) s+=2; return s;
+      const n = (v.name || "").toLowerCase();
+      const l = (v.lang || "").toLowerCase();
+      let s = 0;
+      if (l.startsWith("zh")) s += 5;
+      if (l.includes("cmn")) s += 2;
+      if (l.includes("zh-cn") || l.includes("cmn-hans")) s += 2;
+      if (/chinese|中文|普通话|国语/.test(n)) s += 2;
+      return s;
     };
-    return [...list].sort((a,b)=>score(b)-score(a))[0] || null;
+    return [...list].sort((a, b) => score(b) - score(a))[0] || null;
   }, [voices]);
 
-  // ✅ 새 스키마 로드: dailies → wordIds → /words
+  // ✅ 새 스키마 로드: dailies → wordIds → /words (ID 순서 보장)
   useEffect(() => {
     (async () => {
       try {
@@ -79,12 +119,19 @@ export default function EverydayPage() {
         const hasDate = (d) => typeof d === "string" && d.trim().length > 0;
 
         for (const g of groups) {
-          if (!hasDate(g?.date)) continue; // ✅ 날짜 없는 그룹 스킵
+          if (!hasDate(g?.date)) continue; // 날짜 없는 그룹 스킵
           const ids = Array.isArray(g.wordIds) ? g.wordIds : [];
-          const words = ids.length ? await fetchWordsByIds(ids) : [];
+          if (ids.length === 0) {
+            out.push({ date: g.date, words: [] });
+            continue;
+          }
+
+          const fetched = await fetchWordsByIds(ids);
+          const words = orderWordsByIds(ids, Array.isArray(fetched) ? fetched : []);
           out.push({ date: g.date, words });
         }
 
+        // 최신 날짜 우선
         out.sort((a, b) => (a.date < b.date ? 1 : -1));
         setDays(out);
       } catch (e) {
@@ -96,13 +143,15 @@ export default function EverydayPage() {
 
   const allPos = useMemo(() => {
     const s = new Set();
-    (days || []).forEach(d => (d.words || []).forEach(w => w.pos && s.add(w.pos)));
+    (days || []).forEach((d) => (d.words || []).forEach((w) => w.pos && s.add(w.pos)));
     return Array.from(s).sort();
   }, [days]);
 
   const allTags = useMemo(() => {
     const s = new Set();
-    (days || []).forEach(d => (d.words || []).forEach(w => (w.tags || []).forEach(t => s.add(t))));
+    (days || []).forEach((d) =>
+      (d.words || []).forEach((w) => (w.tags || []).forEach((t) => s.add(t)))
+    );
     return Array.from(s).sort();
   }, [days]);
 
@@ -111,7 +160,7 @@ export default function EverydayPage() {
     const hasDate = (d) => typeof d === "string" && d.trim().length > 0;
 
     return (days || [])
-      .filter((d) => hasDate(d?.date)) // ✅ 날짜 없는 그룹 제거
+      .filter((d) => hasDate(d?.date))
       .map((d) => ({
         ...d,
         words: (d.words || []).filter((w) => {
@@ -156,11 +205,21 @@ export default function EverydayPage() {
         />
 
         {/* 품사 */}
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ overflowX: "auto", pb: 0.5 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          flexWrap="wrap"
+          sx={{ overflowX: "auto", pb: 0.5 }}
+        >
           <Typography variant="body2" sx={{ mr: 1, minWidth: 52 }}>
             품사
           </Typography>
-          <Chip label="전체" variant={!posFilter ? "filled" : "outlined"} onClick={() => setPosFilter(null)} />
+          <Chip
+            label="전체"
+            variant={!posFilter ? "filled" : "outlined"}
+            onClick={() => setPosFilter(null)}
+          />
           {allPos.map((p) => (
             <Chip
               key={p}
@@ -172,11 +231,21 @@ export default function EverydayPage() {
         </Stack>
 
         {/* 태그 */}
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ overflowX: "auto", pb: 0.5 }}>
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          flexWrap="wrap"
+          sx={{ overflowX: "auto", pb: 0.5 }}
+        >
           <Typography variant="body2" sx={{ mr: 1, minWidth: 52 }}>
             태그
           </Typography>
-          <Chip label="전체" variant={!tagFilter ? "filled" : "outlined"} onClick={() => setTagFilter(null)} />
+          <Chip
+            label="전체"
+            variant={!tagFilter ? "filled" : "outlined"}
+            onClick={() => setTagFilter(null)}
+          />
           {allTags.map((t) => (
             <Chip
               key={t}
@@ -200,7 +269,7 @@ export default function EverydayPage() {
               <Stack spacing={1.25}>
                 {day.words.map((w, idx) => (
                   <Box
-                    key={`${day.date}-${w.zh}-${idx}`}
+                    key={`${day.date}-${getId(w)}-${idx}`}
                     sx={{
                       display: "grid",
                       gridTemplateColumns: "minmax(96px, 1fr) minmax(0, 3fr) auto",
@@ -247,7 +316,12 @@ export default function EverydayPage() {
                     </Typography>
 
                     {/* 품사 & 태그 */}
-                    <Stack direction="row" spacing={0.5} justifyContent="flex-end" sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
+                      justifyContent="flex-end"
+                      sx={{ flexWrap: "wrap", rowGap: 0.5 }}
+                    >
                       {w.pos && <Chip size="small" label={w.pos} />}
                       {(w.tags || []).map((t) => (
                         <Chip key={t} size="small" variant="outlined" label={t} />

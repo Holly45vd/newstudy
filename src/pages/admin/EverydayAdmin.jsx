@@ -3,8 +3,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Container, Grid, Paper, Stack, TextField, Typography, Button,
   Chip, Divider, IconButton, Tooltip, Alert, Box, Dialog,
-  DialogTitle, DialogContent, DialogActions
-} from "@mui/material";
+  DialogTitle, DialogContent, DialogActions, RadioGroup, FormControlLabel, Radio
+ } from "@mui/material";
+import FileCopyIcon from "@mui/icons-material/FileCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import SaveIcon from "@mui/icons-material/Save";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -291,6 +292,80 @@ export default function EverydayAdmin() {
     }
   };
 
+
+     // ==== 포맷 템플릿 모달 ====
+  const [tplOpen, setTplOpen] = useState(false);
+  const [tplMode, setTplMode] = useState("group"); // "group" | "word"
+  const [tplText, setTplText] = useState("");
+
+  // 표준 템플릿 상수
+  const TEMPLATE_GROUP = `[
+  {
+    "date": "YYYY-MM-DD",
+    "words": [
+      {
+        "id": "단어(한자)",
+        "pinyin": "병음",
+        "meta": { "updatedAt": { "type": "firestore/timestamp/1.0", "seconds": 0, "nanoseconds": 0 } },
+        "koPronunciation": "한국식 발음",
+        "pronunciation": [ { "tone": "성조", "pinyin": "세부 병음", "ko": "세부 한글 발음", "label": "단어" } ],
+        "sentence": "예문 (중국어)",
+        "sentencePinyin": "예문 병음",
+        "sentenceKo": "예문 한국어 번역",
+        "sentenceKoPronunciation": "예문 한국어 발음",
+        "sourceUrl": "https://...",
+        "pos": "품사",
+        "tags": ["태그1", "태그2"],
+        "ko": "단어 뜻 (한국어)",
+        "zh": "단어 (중국어 원형)",
+        "keyPoints": ["포인트1","포인트2"],
+        "grammar": [ { "term": "문법 용어", "desc": "설명", "structure": "구조 예" } ],
+        "extensions": [
+          { "zh": "확장 예문1", "pinyin": "병음1", "ko": "번역1", "koPron": "발음1" },
+          { "zh": "확장 예문2", "pinyin": "병음2", "ko": "번역2", "koPron": "발음2" }
+        ]
+      }
+    ]
+  }
+]`;
+
+  const TEMPLATE_WORD = `{
+  "id": "단어(한자)",
+  "pinyin": "병음",
+  "meta": { "updatedAt": { "type": "firestore/timestamp/1.0", "seconds": 0, "nanoseconds": 0 } },
+  "koPronunciation": "한국식 발음",
+  "pronunciation": [ { "tone": "성조", "pinyin": "세부 병음", "ko": "세부 한글 발음", "label": "단어" } ],
+  "sentence": "예문 (중국어)",
+  "sentencePinyin": "예문 병음",
+  "sentenceKo": "예문 한국어 번역",
+  "sentenceKoPronunciation": "예문 한국어 발음",
+  "sourceUrl": "https://...",
+  "pos": "품사",
+  "tags": ["태그1","태그2"],
+  "ko": "단어 뜻 (한국어)",
+  "zh": "단어 (중국어 원형)",
+  "keyPoints": ["포인트1","포인트2"],
+  "grammar": [ { "term": "문법 용어", "desc": "설명", "structure": "구조 예" } ],
+  "extensions": [
+    { "zh": "확장 예문1", "pinyin": "병음1", "ko": "번역1", "koPron": "발음1" }
+  ]
+}`;
+
+  const initTemplate = (mode = "group") => {
+    setTplMode(mode);
+    setTplText(mode === "group" ? TEMPLATE_GROUP : TEMPLATE_WORD);
+    setTplOpen(true);
+  };
+
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage({ type: "success", text: "클립보드에 복사했습니다." });
+    } catch {
+      setMessage({ type: "error", text: "복사 실패: 브라우저 권한을 확인하세요." });
+    }
+  };
+
   return (
     <Container maxWidth="lg" sx={{ pb: 8 }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 1, mb: 2 }}>
@@ -307,6 +382,13 @@ export default function EverydayAdmin() {
               <IconButton onClick={load} disabled={loading}><RefreshIcon /></IconButton>
             </span>
           </Tooltip>
+           <Button
+           variant="outlined"
+           onClick={() => initTemplate("group")}
+           sx={{ textTransform: "none" }}
+         >
+           포맷 붙여넣기
+         </Button>
         </Stack>
       </Stack>
 
@@ -528,6 +610,111 @@ export default function EverydayAdmin() {
           <Button onClick={() => setJsonOpen(false)} sx={{ textTransform: "none" }}>닫기</Button>
           <Button variant="contained" onClick={onSaveJson} sx={{ textTransform: "none" }}>
             저장
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+       {/* 포맷 붙여넣기 모달 */}
+      <Dialog open={tplOpen} onClose={() => setTplOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              데일리쿠키 포맷 붙여넣기
+            </Typography>
+            <RadioGroup
+              row
+              value={tplMode}
+              onChange={(e) => {
+                const mode = e.target.value;
+                setTplMode(mode);
+                setTplText(mode === "group" ? TEMPLATE_GROUP : TEMPLATE_WORD);
+              }}
+            >
+              <FormControlLabel value="group" control={<Radio />} label="그룹(여러 단어/날짜 포함)" />
+              <FormControlLabel value="word" control={<Radio />} label="단어(한 개)" />
+            </RadioGroup>
+          </Stack>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            • 그룹 모드: <code>[{"{ date, words:[...] }"}]</code> 배열 → <strong>일괄 업로드</strong>에 바로 사용<br/>
+            • 단어 모드: <code>{"{ ...word }"}</code> 객체 → <strong>좌측 폼 auto-fill</strong> 또는 <strong>/words upsert</strong>에 사용
+          </Typography>
+          <TextField
+            value={tplText}
+            onChange={(e) => setTplText(e.target.value)}
+            multiline
+            minRows={16}
+            fullWidth
+            placeholder="여기에 템플릿 또는 당신의 JSON을 붙여넣으세요"
+            InputProps={{ sx: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 13 } }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            startIcon={<FileCopyIcon />}
+            onClick={() => copyToClipboard(tplText)}
+            sx={{ textTransform: "none" }}
+          >
+            복사
+          </Button>
+          {tplMode === "group" ? (
+            <Button
+              variant="outlined"
+              onClick={() => {
+                // 붙여넣은 텍스트를 일괄 업로드 입력창으로 전송
+                setBulkJson(tplText);
+                setTplOpen(false);
+                setMessage({ type: "success", text: "일괄 업로드 입력창에 삽입했습니다." });
+              }}
+              sx={{ textTransform: "none" }}
+            >
+              일괄 업로드로 보내기
+            </Button>
+          ) : (
+            <Button
+              variant="outlined"
+              onClick={() => {
+                // 단어 객체를 파싱해서 좌측 폼에 자동 채움
+                try {
+                  const w = JSON.parse(tplText);
+                  const fixed = fixWordSchema(w);
+                  setForm((f) => ({
+                    ...f,
+                    zh: fixed.zh || fixed.id || "",
+                    pinyin: fixed.pinyin || "",
+                    ko: fixed.ko || "",
+                    pos: fixed.pos || "",
+                    tags: (fixed.tags || []).join(", "),
+                    sentence: fixed.sentence || "",
+                    sentencePinyin: fixed.sentencePinyin || "",
+                    sentenceKo: fixed.sentenceKo || "",
+                    sentenceKoPronunciation: fixed.sentenceKoPronunciation || fixed.sentencePron || "",
+                    grammar: JSON.stringify(fixed.grammar || [], null, 2),
+                    extensions: JSON.stringify(
+                      Array.isArray(fixed.extensions)
+                        ? fixed.extensions.map((e) => ({ ...e, koPron: e.koPron ?? e.pron ?? "" }))
+                        : [],
+                      null,
+                      2
+                    ),
+                    keyPoints: JSON.stringify(fixed.keyPoints || [], null, 2),
+                    pronunciation: JSON.stringify(fixed.pronunciation || [], null, 2),
+                  }));
+                  setTplOpen(false);
+                  setMessage({ type: "success", text: "폼에 자동 입력했습니다. 날짜만 지정 후 저장하세요." });
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                } catch (e) {
+                  setMessage({ type: "error", text: `JSON 파싱 실패: ${e.message}` });
+                }
+              }}
+              sx={{ textTransform: "none" }}
+            >
+              폼에 채우기
+            </Button>
+          )}
+          <Button onClick={() => setTplOpen(false)} sx={{ textTransform: "none" }}>
+            닫기
           </Button>
         </DialogActions>
       </Dialog>
